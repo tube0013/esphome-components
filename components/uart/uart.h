@@ -40,7 +40,7 @@ class UARTDevice {
 
   int available() { return this->parent_->available(); }
 
-  void flush() { return this->parent_->flush(); }
+  void flush() { this->parent_->flush(); }
 
   // Compat APIs
   int read() {
@@ -62,8 +62,8 @@ class UARTDevice {
 
   /// Check that the configuration of the UART bus matches the provided values and otherwise print a warning
   void check_uart_settings(uint32_t baud_rate, uint8_t stop_bits = 1,
-                           UARTParityOptions parity = UART_CONFIG_PARITY_NONE, uint8_t data_bits = 8, 
-                           UARTHardwareFlowControl hw_flowctrl = UART_CONFIG_HW_FLOWCTRL_DISABLE);
+                           UARTParityOptions parity = UART_CONFIG_PARITY_NONE, uint8_t data_bits = 8,
+                           UARTHwFlowControl hw_flow_control = UART_CONFIG_HW_FLOW_CONTROL_DISABLE);
 
  protected:
   UARTComponent *parent_{nullptr};

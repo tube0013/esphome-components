@@ -18,12 +18,13 @@ bool ESP8266UartComponent::serial0_in_use = false;  // NOLINT(cppcoreguidelines-
 uint32_t ESP8266UartComponent::get_config() {
   uint32_t config = 0;
 
-  if (this->parity_ == UART_CONFIG_PARITY_NONE)
+  if (this->parity_ == UART_CONFIG_PARITY_NONE) {
     config |= UART_PARITY_NONE;
-  else if (this->parity_ == UART_CONFIG_PARITY_EVEN)
+  } else if (this->parity_ == UART_CONFIG_PARITY_EVEN) {
     config |= UART_PARITY_EVEN;
-  else if (this->parity_ == UART_CONFIG_PARITY_ODD)
+  } else if (this->parity_ == UART_CONFIG_PARITY_ODD) {
     config |= UART_PARITY_ODD;
+  }
 
   switch (this->data_bits_) {
     case 5:
@@ -40,10 +41,11 @@ uint32_t ESP8266UartComponent::get_config() {
       break;
   }
 
-  if (this->stop_bits_ == 1)
+  if (this->stop_bits_ == 1) {
     config |= UART_NB_STOP_BIT_1;
-  else
+  } else {
     config |= UART_NB_STOP_BIT_2;
+  }
 
   if (this->tx_pin_ != nullptr && this->tx_pin_->is_inverted())
     config |= BIT(22);
@@ -96,10 +98,26 @@ void ESP8266UartComponent::setup() {
   }
 }
 
+void ESP8266UartComponent::load_settings(bool dump_config) {
+  ESP_LOGCONFIG(TAG, "Loading UART bus settings...");
+  if (this->hw_serial_ != nullptr) {
+    SerialConfig config = static_cast<SerialConfig>(get_config());
+    this->hw_serial_->begin(this->baud_rate_, config);
+    this->hw_serial_->setRxBufferSize(this->rx_buffer_size_);
+  } else {
+    this->sw_serial_->setup(this->tx_pin_, this->rx_pin_, this->baud_rate_, this->stop_bits_, this->data_bits_,
+                            this->parity_, this->rx_buffer_size_);
+  }
+  if (dump_config) {
+    ESP_LOGCONFIG(TAG, "UART bus was reloaded.");
+    this->dump_config();
+  }
+}
+
 void ESP8266UartComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "UART Bus:");
-  LOG_PIN("  TX Pin: ", tx_pin_);
-  LOG_PIN("  RX Pin: ", rx_pin_);
+  LOG_PIN("  TX Pin: ", this->tx_pin_);
+  LOG_PIN("  RX Pin: ", this->rx_pin_);
   if (this->rx_pin_ != nullptr) {
     ESP_LOGCONFIG(TAG, "  RX Buffer Size: %u", this->rx_buffer_size_);  // NOLINT
   }
@@ -234,12 +252,13 @@ void IRAM_ATTR HOT ESP8266SoftwareSerial::write_byte(uint8_t data) {
   }
   bool parity_bit = false;
   bool need_parity_bit = true;
-  if (this->parity_ == UART_CONFIG_PARITY_EVEN)
+  if (this->parity_ == UART_CONFIG_PARITY_EVEN) {
     parity_bit = false;
-  else if (this->parity_ == UART_CONFIG_PARITY_ODD)
+  } else if (this->parity_ == UART_CONFIG_PARITY_ODD) {
     parity_bit = true;
-  else
+  } else {
     need_parity_bit = false;
+  }
 
   {
     InterruptLock lock;

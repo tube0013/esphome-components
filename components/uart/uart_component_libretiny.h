@@ -1,9 +1,6 @@
 #pragma once
 
-#ifdef USE_RP2040
-
-#include <SerialPIO.h>
-#include <SerialUART.h>
+#ifdef USE_LIBRETINY
 
 #include <vector>
 #include "esphome/core/component.h"
@@ -14,7 +11,7 @@
 namespace esphome {
 namespace uart {
 
-class RP2040UartComponent : public UARTComponent, public Component {
+class LibreTinyUARTComponent : public UARTComponent, public Component {
  public:
   void setup() override;
   void dump_config() override;
@@ -30,17 +27,17 @@ class RP2040UartComponent : public UARTComponent, public Component {
 
   uint16_t get_config();
 
-  bool is_hw_serial() { return this->hw_serial_; }
   HardwareSerial *get_hw_serial() { return this->serial_; }
+  int8_t get_hw_serial_number() { return this->hardware_idx_; }
 
  protected:
-  void check_logger_conflict() override {}
-  bool hw_serial_{false};
+  void check_logger_conflict() override;
 
   HardwareSerial *serial_{nullptr};
+  int8_t hardware_idx_{-1};
 };
 
 }  // namespace uart
 }  // namespace esphome
 
-#endif  // USE_RP2040
+#endif  // USE_LIBRETINY

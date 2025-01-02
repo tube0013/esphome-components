@@ -1,5 +1,5 @@
 from typing import Optional
-
+import re
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
@@ -11,6 +11,7 @@ from esphome.const import (
     CONF_NUMBER,
     CONF_RX_PIN,
     CONF_TX_PIN,
+    CONF_PORT,
     CONF_UART_ID,
     CONF_DATA,
     CONF_RX_BUFFER_SIZE,
@@ -27,11 +28,9 @@ from esphome.const import (
     CONF_DUMMY_RECEIVER,
     CONF_DUMMY_RECEIVER_ID,
     CONF_LAMBDA,
+    PLATFORM_HOST,
 )
 from esphome.core import CORE
-
-CONF_CTS_PIN = "cts_pin"
-CONF_RTS_PIN = "rts_pin"
 
 CODEOWNERS = ["@esphome/core"]
 uart_ns = cg.esphome_ns.namespace("uart")
@@ -45,12 +44,58 @@ ESP8266UartComponent = uart_ns.class_(
     "ESP8266UartComponent", UARTComponent, cg.Component
 )
 RP2040UartComponent = uart_ns.class_("RP2040UartComponent", UARTComponent, cg.Component)
+LibreTinyUARTComponent = uart_ns.class_(
+    "LibreTinyUARTComponent", UARTComponent, cg.Component
+)
+HostUartComponent = uart_ns.class_("HostUartComponent", UARTComponent, cg.Component)
+
+NATIVE_UART_CLASSES = (
+    str(IDFUARTComponent),
+    str(ESP32ArduinoUARTComponent),
+    str(ESP8266UartComponent),
+    str(RP2040UartComponent),
+    str(LibreTinyUARTComponent),
+)
+
+HOST_BAUD_RATES = [
+    50,
+    75,
+    110,
+    134,
+    150,
+    200,
+    300,
+    600,
+    1200,
+    1800,
+    2400,
+    4800,
+    9600,
+    19200,
+    38400,
+    57600,
+    115200,
+    230400,
+    460800,
+    500000,
+    576000,
+    921600,
+    1000000,
+    1152000,
+    1500000,
+    2000000,
+    2500000,
+    3000000,
+    3500000,
+    4000000,
+]
 
 UARTDevice = uart_ns.class_("UARTDevice")
 UARTWriteAction = uart_ns.class_("UARTWriteAction", automation.Action)
 UARTDebugger = uart_ns.class_("UARTDebugger", cg.Component, automation.Action)
 UARTDummyReceiver = uart_ns.class_("UARTDummyReceiver", cg.Component)
 MULTI_CONF = True
+MULTI_CONF_NO_DEFAULT = True
 
 
 def validate_raw_data(value):
@@ -75,13 +120,28 @@ def validate_rx_pin(value):
 def validate_invert_esp32(config):
     if (
         CORE.is_esp32
+        and CORE.using_arduino
         and CONF_TX_PIN in config
         and CONF_RX_PIN in config
         and config[CONF_TX_PIN][CONF_INVERTED] != config[CONF_RX_PIN][CONF_INVERTED]
     ):
         raise cv.Invalid(
-            "Different invert values for TX and RX pin are not (yet) supported for ESP32."
+            "Different invert values for TX and RX pin are not supported for ESP32 when using Arduino."
         )
+    return config
+
+
+def validate_host_config(config):
+    if CORE.is_host:
+        if CONF_TX_PIN in config or CONF_RX_PIN in config:
+            raise cv.Invalid(
+                "TX and RX pins are not supported for UART on host platform."
+            )
+        if config[CONF_BAUD_RATE] not in HOST_BAUD_RATES:
+            raise cv.Invalid(
+                f"Host platform doesn't support baud rate {config[CONF_BAUD_RATE]}",
+                path=[CONF_BAUD_RATE],
+            )
     return config
 
 
@@ -95,6 +155,10 @@ def _uart_declare_type(value):
             return cv.declare_id(IDFUARTComponent)(value)
     if CORE.is_rp2040:
         return cv.declare_id(RP2040UartComponent)(value)
+    if CORE.is_libretiny:
+        return cv.declare_id(LibreTinyUARTComponent)(value)
+    if CORE.is_host:
+        return cv.declare_id(HostUartComponent)(value)
     raise NotImplementedError
 
 
@@ -105,19 +169,18 @@ UART_PARITY_OPTIONS = {
     "ODD": UARTParityOptions.UART_CONFIG_PARITY_ODD,
 }
 
-UARTHardwareFlowControl = uart_ns.enum("UARTHardwareFlowControl")
-UART_HW_FLOWCTRL_OPTIONS = {
-    "DISABLE": UARTHardwareFlowControl.UART_CONFIG_HW_FLOWCTRL_DISABLE,
-    "RTS": UARTHardwareFlowControl.UART_CONFIG_HW_FLOWCTRL_RTS,
-    "CTS": UARTHardwareFlowControl.UART_CONFIG_HW_FLOWCTRL_CTS,
-    "CTS_RTS": UARTHardwareFlowControl.UART_CONFIG_HW_FLOWCTRL_CTS_RTS,
-    "MAX": UARTHardwareFlowControl.UART_CONFIG_HW_FLOWCTRL_MAX,
+UARTHwFlowControl = uart_ns.enum("UARTHwFlowControl")
+UART_HW_FLOW_CONTROL_OPTIONS = {
+    "DISABLE": UARTHwFlowControl.UART_CONFIG_HW_FLOW_CONTROL_DISABLE,
+    "CTS_RTS": UARTHwFlowControl.UART_CONFIG_HW_FLOW_CONTROL_CTS_RTS,
 }
 
+CONF_RTS_PIN = "rts_pin"
+CONF_CTS_PIN = "cts_pin"
 CONF_STOP_BITS = "stop_bits"
 CONF_DATA_BITS = "data_bits"
 CONF_PARITY = "parity"
-CONF_HW_FLOWCTRL = "hw_flowctrl"
+CONF_HW_FLOW_CONTROL = "hw_flow_control"
 
 UARTDirection = uart_ns.enum("UARTDirection")
 UART_DIRECTIONS = {
@@ -145,6 +208,12 @@ def maybe_empty_debug(value):
     if value is None:
         value = {}
     return DEBUG_SCHEMA(value)
+
+
+def validate_port(value):
+    if not re.match(r"^/(?:[^/]+/)[^/]+$", value):
+        raise cv.Invalid("Port must be a valid device path")
+    return value
 
 
 DEBUG_SCHEMA = cv.Schema(
@@ -179,17 +248,17 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_BAUD_RATE): cv.int_range(min=1),
             cv.Optional(CONF_TX_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_RX_PIN): validate_rx_pin,
-            # TODO: validate to only allow this on esp32 idf framework
-            cv.Optional(CONF_CTS_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_RTS_PIN): pins.internal_gpio_output_pin_schema,
+            cv.Optional(CONF_CTS_PIN): pins.internal_gpio_input_pin_schema,
+            cv.Optional(CONF_PORT): cv.All(validate_port, cv.only_on(PLATFORM_HOST)),
             cv.Optional(CONF_RX_BUFFER_SIZE, default=256): cv.validate_bytes,
             cv.Optional(CONF_STOP_BITS, default=1): cv.one_of(1, 2, int=True),
             cv.Optional(CONF_DATA_BITS, default=8): cv.int_range(min=5, max=8),
             cv.Optional(CONF_PARITY, default="NONE"): cv.enum(
                 UART_PARITY_OPTIONS, upper=True
             ),
-            cv.Optional(CONF_HW_FLOWCTRL, default="DISABLE"): cv.enum(
-                UART_HW_FLOWCTRL_OPTIONS, upper=True
+            cv.Optional(CONF_HW_FLOW_CONTROL, default="DISABLE"): cv.enum(
+                UART_HW_FLOW_CONTROL_OPTIONS, upper=True
             ),
             cv.Optional(CONF_INVERT): cv.invalid(
                 "This option has been removed. Please instead use invert in the tx/rx pin schemas."
@@ -197,8 +266,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_DEBUG): maybe_empty_debug,
         }
     ).extend(cv.COMPONENT_SCHEMA),
-    cv.has_at_least_one_key(CONF_TX_PIN, CONF_RX_PIN),
+    cv.has_at_least_one_key(CONF_TX_PIN, CONF_RX_PIN, CONF_PORT),
     validate_invert_esp32,
+    validate_host_config,
 )
 
 
@@ -240,17 +310,19 @@ async def to_code(config):
     if CONF_RX_PIN in config:
         rx_pin = await cg.gpio_pin_expression(config[CONF_RX_PIN])
         cg.add(var.set_rx_pin(rx_pin))
-    if CONF_CTS_PIN in config:
-        cts_pin = await cg.gpio_pin_expression(config[CONF_CTS_PIN])
-        cg.add(var.set_cts_pin(cts_pin))
     if CONF_RTS_PIN in config:
         rts_pin = await cg.gpio_pin_expression(config[CONF_RTS_PIN])
         cg.add(var.set_rts_pin(rts_pin))
+    if CONF_CTS_PIN in config:
+        cts_pin = await cg.gpio_pin_expression(config[CONF_CTS_PIN])
+        cg.add(var.set_cts_pin(cts_pin))
+    if CONF_PORT in config:
+        cg.add(var.set_name(config[CONF_PORT]))
     cg.add(var.set_rx_buffer_size(config[CONF_RX_BUFFER_SIZE]))
     cg.add(var.set_stop_bits(config[CONF_STOP_BITS]))
     cg.add(var.set_data_bits(config[CONF_DATA_BITS]))
     cg.add(var.set_parity(config[CONF_PARITY]))
-    cg.add(var.set_hw_flowctrl(config[CONF_HW_FLOWCTRL]))
+    cg.add(var.set_hw_flow_control(config[CONF_HW_FLOW_CONTROL]))
 
     if CONF_DEBUG in config:
         await debug_to_code(config[CONF_DEBUG], var)
@@ -269,16 +341,21 @@ KEY_UART_DEVICES = "uart_devices"
 def final_validate_device_schema(
     name: str,
     *,
+    uart_bus: str = CONF_UART_ID,
     baud_rate: Optional[int] = None,
     require_tx: bool = False,
     require_rx: bool = False,
-    require_cts: bool = False,
     require_rts: bool = False,
+    require_cts: bool = False,
+    data_bits: Optional[int] = None,
+    parity: Optional[str] = None,
+    stop_bits: Optional[int] = None,
+    hw_flow_control: Optional[str] = None,
 ):
     def validate_baud_rate(value):
         if value != baud_rate:
             raise cv.Invalid(
-                f"Component {name} required baud rate {baud_rate} for the uart bus"
+                f"Component {name} requires baud rate {baud_rate} for the uart referenced by {uart_bus}"
             )
         return value
 
@@ -294,46 +371,83 @@ def final_validate_device_schema(
 
         return validator
 
+    def validate_data_bits(value):
+        if value != data_bits:
+            raise cv.Invalid(
+                f"Component {name} requires {data_bits} data bits for the uart referenced by {uart_bus}"
+            )
+        return value
+
+    def validate_parity(value):
+        if value != parity:
+            raise cv.Invalid(
+                f"Component {name} requires parity {parity} for the uart referenced by {uart_bus}"
+            )
+        return value
+
+    def validate_stop_bits(value):
+        if value != stop_bits:
+            raise cv.Invalid(
+                f"Component {name} requires {stop_bits} stop bits for the uart referenced by {uart_bus}"
+            )
+        return value
+
+    def validate_hw_flow_control(value):
+        if value != hw_flow_control:
+            raise cv.Invalid(
+                f"Component {name} requires hw flow control {hw_flow_control} for the uart referenced by {uart_bus}"
+            )
+        return value
+
     def validate_hub(hub_config):
         hub_schema = {}
         uart_id = hub_config[CONF_ID]
+        uart_id_type_str = str(uart_id.type)
         devices = fv.full_config.get().data.setdefault(KEY_UART_DEVICES, {})
         device = devices.setdefault(uart_id, {})
 
-        if require_tx:
+        if require_tx and uart_id_type_str in NATIVE_UART_CLASSES:
             hub_schema[
                 cv.Required(
                     CONF_TX_PIN,
-                    msg=f"Component {name} requires this uart bus to declare a tx_pin",
+                    msg=f"Component {name} requires uart referenced by {uart_bus} to declare a tx_pin",
                 )
             ] = validate_pin(CONF_TX_PIN, device)
-        if require_rx:
+        if require_rx and uart_id_type_str in NATIVE_UART_CLASSES:
             hub_schema[
                 cv.Required(
                     CONF_RX_PIN,
-                    msg=f"Component {name} requires this uart bus to declare a rx_pin",
+                    msg=f"Component {name} requires uart referenced by {uart_bus} to declare a rx_pin",
                 )
             ] = validate_pin(CONF_RX_PIN, device)
-        if require_cts:
-            hub_schema[
-                cv.Required(
-                    CONF_CTS_PIN,
-                    msg=f"Component {name} requires this uart bus to declare a cts_pin",
-                )
-            ] = validate_pin(CONF_CTS_PIN, device)
-        if require_rts:
+        if require_rts and uart_id_type_str in NATIVE_UART_CLASSES:
             hub_schema[
                 cv.Required(
                     CONF_RTS_PIN,
-                    msg=f"Component {name} requires this uart bus to declare a rts_pin",
+                    msg=f"Component {name} requires uart referenced by {uart_bus} to declare a rts_pin",
                 )
             ] = validate_pin(CONF_RTS_PIN, device)
+        if require_cts and uart_id_type_str in NATIVE_UART_CLASSES:
+            hub_schema[
+                cv.Required(
+                    CONF_CTS_PIN,
+                    msg=f"Component {name} requires uart referenced by {uart_bus} to declare a cts_pin",
+                )
+            ] = validate_pin(CONF_CTS_PIN, device)
         if baud_rate is not None:
             hub_schema[cv.Required(CONF_BAUD_RATE)] = validate_baud_rate
+        if data_bits is not None:
+            hub_schema[cv.Required(CONF_DATA_BITS)] = validate_data_bits
+        if parity is not None:
+            hub_schema[cv.Required(CONF_PARITY)] = validate_parity
+        if stop_bits is not None:
+            hub_schema[cv.Required(CONF_STOP_BITS)] = validate_stop_bits
+        if hw_flow_control is not None:
+            hub_schema[cv.Required(CONF_HW_FLOW_CONTROL)] = validate_hw_flow_control
         return cv.Schema(hub_schema, extra=cv.ALLOW_EXTRA)(hub_config)
 
     return cv.Schema(
-        {cv.Required(CONF_UART_ID): fv.id_declaration_match_schema(validate_hub)},
+        {cv.Required(uart_bus): fv.id_declaration_match_schema(validate_hub)},
         extra=cv.ALLOW_EXTRA,
     )
 

@@ -1,9 +1,9 @@
 #ifdef USE_ESP32_FRAMEWORK_ARDUINO
+#include "uart_component_esp32_arduino.h"
 #include "esphome/core/application.h"
 #include "esphome/core/defines.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
-#include "uart_component_esp32_arduino.h"
 
 #ifdef USE_LOGGER
 #include "esphome/components/logger/logger.h"
@@ -41,10 +41,11 @@ uint32_t ESP32ArduinoUARTComponent::get_config() {
    * tick_ref_always_on:27   select the clock.1：apb clock：ref_tick
    */
 
-  if (this->parity_ == UART_CONFIG_PARITY_EVEN)
+  if (this->parity_ == UART_CONFIG_PARITY_EVEN) {
     config |= UART_PARITY_EVEN | UART_PARITY_ENABLE;
-  else if (this->parity_ == UART_CONFIG_PARITY_ODD)
+  } else if (this->parity_ == UART_CONFIG_PARITY_ODD) {
     config |= UART_PARITY_ODD | UART_PARITY_ENABLE;
+  }
 
   switch (this->data_bits_) {
     case 5:
@@ -61,10 +62,11 @@ uint32_t ESP32ArduinoUARTComponent::get_config() {
       break;
   }
 
-  if (this->stop_bits_ == 1)
+  if (this->stop_bits_ == 1) {
     config |= UART_NB_STOP_BIT_1;
-  else
+  } else {
     config |= UART_NB_STOP_BIT_2;
+  }
 
   config |= UART_TICK_APB_CLOCK;
 
@@ -84,12 +86,52 @@ void ESP32ArduinoUARTComponent::setup() {
   is_default_tx = tx_pin_ == nullptr || tx_pin_->get_pin() == 1;
   is_default_rx = rx_pin_ == nullptr || rx_pin_->get_pin() == 3;
 #endif
-  if (is_default_tx && is_default_rx) {
+  static uint8_t next_uart_num = 0;
+  if (is_default_tx && is_default_rx && next_uart_num == 0) {
+#if ARDUINO_USB_CDC_ON_BOOT
+    this->hw_serial_ = &Serial0;
+#else
     this->hw_serial_ = &Serial;
+#endif
+    next_uart_num++;
   } else {
-    static uint8_t next_uart_num = 1;
+#ifdef USE_LOGGER
+    bool logger_uses_hardware_uart = true;
+
+#ifdef USE_LOGGER_USB_CDC
+    if (logger::global_logger->get_uart() == logger::UART_SELECTION_USB_CDC) {
+      // this is not a hardware UART, ignore it
+      logger_uses_hardware_uart = false;
+    }
+#endif  // USE_LOGGER_USB_CDC
+
+#ifdef USE_LOGGER_USB_SERIAL_JTAG
+    if (logger::global_logger->get_uart() == logger::UART_SELECTION_USB_SERIAL_JTAG) {
+      // this is not a hardware UART, ignore it
+      logger_uses_hardware_uart = false;
+    }
+#endif  // USE_LOGGER_USB_SERIAL_JTAG
+
+    if (logger_uses_hardware_uart && logger::global_logger->get_baud_rate() > 0 &&
+        logger::global_logger->get_uart() == next_uart_num) {
+      next_uart_num++;
+    }
+#endif  // USE_LOGGER
+
+    if (next_uart_num >= SOC_UART_NUM) {
+      ESP_LOGW(TAG, "Maximum number of UART components created already.");
+      this->mark_failed();
+      return;
+    }
+
+    this->number_ = next_uart_num;
     this->hw_serial_ = new HardwareSerial(next_uart_num++);  // NOLINT(cppcoreguidelines-owning-memory)
   }
+
+  this->load_settings(false);
+}
+
+void ESP32ArduinoUARTComponent::load_settings(bool dump_config) {
   int8_t tx = this->tx_pin_ != nullptr ? this->tx_pin_->get_pin() : -1;
   int8_t rx = this->rx_pin_ != nullptr ? this->rx_pin_->get_pin() : -1;
   bool invert = false;
@@ -97,12 +139,16 @@ void ESP32ArduinoUARTComponent::setup() {
     invert = true;
   if (rx_pin_ != nullptr && rx_pin_->is_inverted())
     invert = true;
-  this->hw_serial_->begin(this->baud_rate_, get_config(), rx, tx, invert);
   this->hw_serial_->setRxBufferSize(this->rx_buffer_size_);
+  this->hw_serial_->begin(this->baud_rate_, get_config(), rx, tx, invert);
+  if (dump_config) {
+    ESP_LOGCONFIG(TAG, "UART %u was reloaded.", this->number_);
+    this->dump_config();
+  }
 }
 
 void ESP32ArduinoUARTComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "UART Bus:");
+  ESP_LOGCONFIG(TAG, "UART Bus %d:", this->number_);
   LOG_PIN("  TX Pin: ", tx_pin_);
   LOG_PIN("  RX Pin: ", rx_pin_);
   if (this->rx_pin_ != nullptr) {

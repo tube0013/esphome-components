@@ -184,3 +184,4 @@ cython_debug/
 *.exe
 *.out
 *.app
+.DS_Store
