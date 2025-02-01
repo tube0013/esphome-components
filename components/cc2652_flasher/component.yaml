@@ -1,18 +1,12 @@
-# components/cc2652_flasher/component.yaml
 name: cc2652_flasher
-description: A library to flash CC2652 radios over UART.
-version: "0.0.1"
-
-# This domain must match your C++ namespace, for example:
-#   namespace esphome { namespace cc2652_flasher { ... } }
-domains: cc2652_flasher
-
-# Dependencies can be base ESPHome or other components
+version: "1.0.0"
+display_name: "CC2652 Flasher"
+description: >
+  An ESPHome external component that flashes a TI CC2652 radio using a bootloader protocol
+  inspired by cc2538-bsl.py. It downloads a manifest and firmware, temporarily changes the UART baud rate
+  during flashing, and then reverts it back.
 dependencies:
-  - esphome
-  - switch
   - uart
-  - http_request
-
-# Indicate which source files to compile
-sources: cc2652_flasher.cpp
+  - output
+# Optional: specify the repository URL for your component.
+repository: "https://github.com/tube0013/eshome-components"
