@@ -5,8 +5,7 @@ version: "0.0.1"
 
 # This domain must match your C++ namespace, for example:
 #   namespace esphome { namespace cc2652_flasher { ... } }
-domains:
-  - cc2652_flasherTT
+domains: cc2652_flasher
 
 # Dependencies can be base ESPHome or other components
 dependencies:
@@ -16,5 +15,4 @@ dependencies:
   - http_request
 
 # Indicate which source files to compile
-sources:
-  - cc2652_flasher.cpp
+sources: cc2652_flasher.cpp
