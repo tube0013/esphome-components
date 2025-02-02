@@ -139,7 +139,7 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // Insert firmware download and block flashing code here.
+  // Insert your firmware download and block flashing code here.
   // For example, download firmware in chunks and call write_flash_block() repeatedly.
 
   exit_bootloader();
@@ -158,7 +158,7 @@ void CC2652FlasherComponent::setup() {
 }
 
 void CC2652FlasherComponent::loop() {
-  // No recurring tasks.
+  // No recurring tasks in this example.
 }
 
 }  // namespace cc2652_flasher

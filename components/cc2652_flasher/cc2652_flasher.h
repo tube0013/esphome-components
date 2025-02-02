@@ -2,6 +2,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"      // Provides uart::UARTDevice and UARTComponent
 #include "esphome/components/switch/switch.h"  // Provides esphome::switch_::Switch
+#include "esphome/components/api/api_component.h"  // Provides api::Component for custom services
 
 namespace esphome {
 namespace cc2652_flasher {
@@ -19,7 +20,9 @@ namespace cc2652_flasher {
  * IMPORTANT: Verify command codes, ACK values, and packet structure against your
  * CC2652 bootloader documentation.
  */
-class CC2652FlasherComponent : public Component, public uart::UARTDevice {
+class CC2652FlasherComponent : public Component,
+                                public uart::UARTDevice,
+                                public api::Component {
  public:
   // Setters called from the Python configuration.
   void set_manifest_url(const std::string &manifest_url) { manifest_url_ = manifest_url; }
@@ -42,7 +45,7 @@ class CC2652FlasherComponent : public Component, public uart::UARTDevice {
     }
   }
 
-  /// Trigger the flash process. (In production you might register a service instead.)
+  /// Trigger the flash process.
   void flash_firmware();
 
   // Standard ESPHome component interface.
