@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import uart, output
+from esphome.components import uart, switch
 from esphome.const import CONF_ID, CONF_UART_ID
 
 # Define configuration keys.
@@ -9,8 +9,8 @@ CONF_BSL_OUTPUT = "bsl_output"
 CONF_RESET_OUTPUT = "reset_output"
 CONF_FLASHING_BAUD_RATE = "flashing_baud_rate"
 
-DEPENDENCIES = ["uart", "output"]
-AUTO_LOAD = ["uart", "output"]
+DEPENDENCIES = ["uart", "switch"]
+AUTO_LOAD = ["uart", "switch"]
 
 # Create a namespace for our component.
 cc2652_flasher_ns = cg.esphome_ns.namespace("cc2652_flasher")
@@ -18,13 +18,12 @@ CC2652FlasherComponent = cc2652_flasher_ns.class_(
     "CC2652FlasherComponent", cg.Component, uart.UARTDevice
 )
 
-# Define the configuration schema.
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(CC2652FlasherComponent),
     cv.Required("manifest_url"): cv.string,
     cv.Required(CONF_UART_ID): cv.use_id(uart.UARTComponent),
-    cv.Required("bsl_output"): cv.use_id(output.BinaryOutput),
-    cv.Required("reset_output"): cv.use_id(output.BinaryOutput),
+    cv.Required("bsl_output"): cv.use_id(switch.Switch),
+    cv.Required("reset_output"): cv.use_id(switch.Switch),
     cv.Optional("flashing_baud_rate", default=500000): cv.positive_int,
 }).extend(cv.COMPONENT_SCHEMA).extend(uart.UART_DEVICE_SCHEMA)
 
