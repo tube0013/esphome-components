@@ -2,11 +2,12 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"  // Provides delay() and millis()
 #include <cstring>
+
+// Include our custom action header.
 #include "cc2652_flasher_action.h"
 
 namespace esphome {
 namespace cc2652_flasher {
-REGISTER_ACTION("cc2652_flasher.flash", CC2652FlasherAction);
 
 static const char *TAG = "cc2652_flasher";
 
@@ -141,7 +142,7 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // Insert your firmware download and block flashing code here.
+  // Insert firmware download and flashing logic here.
   // For example, download firmware in chunks and call write_flash_block() repeatedly.
 
   exit_bootloader();
@@ -155,13 +156,18 @@ void CC2652FlasherComponent::flash_firmware() {
 
 void CC2652FlasherComponent::setup() {
   ESP_LOGI(TAG, "Setting up CC2652 Flasher Component");
-  // Register a custom service that triggers the flash process.
+  // Register a custom action service so that it can be triggered via automation.
   this->register_service(&CC2652FlasherComponent::flash_firmware, "flash_cc2652");
 }
 
 void CC2652FlasherComponent::loop() {
-  // No recurring tasks in this example.
+  // No recurring tasks.
 }
+
+//
+// Register the custom action using the same string used in YAML ("cc2652_flasher.flash")
+//
+REGISTER_ACTION("cc2652_flasher.flash", CC2652FlasherAction);
 
 }  // namespace cc2652_flasher
 }  // namespace esphome
