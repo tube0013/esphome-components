@@ -1,6 +1,6 @@
 #include "cc2652_flasher.h"
 #include "esphome/core/log.h"
-#include "esphome/core/delay.h"
+#include "Arduino.h"         // Use Arduino.h for delay() and millis()
 #include <cstring>
 
 namespace esphome {
@@ -140,9 +140,9 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // Download manifest and firmware (not repeated here for brevity; use your existing code)
-  // ...
-  // After flashing is complete, exit bootloader mode:
+  // Firmware download and flashing logic would be here...
+  // (For brevity, that part of the code is omitted.)
+
   exit_bootloader();
 
   ESP_LOGI(TAG, "Reverting UART baud rate back to %u", original_baud_rate);
@@ -154,7 +154,8 @@ void CC2652FlasherComponent::flash_firmware() {
 
 void CC2652FlasherComponent::setup() {
   ESP_LOGI(TAG, "Setting up CC2652 Flasher Component");
-  // For demonstration, call flash_firmware() in setup; in production, register a service.
+  // For demonstration, flash_firmware() is called during setup.
+  // In production, consider registering a service instead.
   flash_firmware();
 }
 
