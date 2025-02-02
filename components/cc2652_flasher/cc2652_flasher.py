@@ -2,6 +2,9 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart, switch
 from esphome.const import CONF_ID, CONF_UART_ID
+from .cc2652_flasher import *
+from .cc2652_flasher_action import *
+
 
 # Define configuration keys.
 CONF_MANIFEST_URL = "manifest_url"
