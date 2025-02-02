@@ -2,9 +2,11 @@
 #include "esphome/core/log.h"
 #include "esphome/core/hal.h"  // Provides delay() and millis()
 #include <cstring>
+#include "cc2652_flasher_action.h"
 
 namespace esphome {
 namespace cc2652_flasher {
+REGISTER_ACTION("cc2652_flasher.flash", CC2652FlasherAction);
 
 static const char *TAG = "cc2652_flasher";
 
