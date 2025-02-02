@@ -124,7 +124,6 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // Here we assume the original baud rate is that of the UART configuration (e.g., 115200).
   uint32_t original_baud_rate = this->get_baud_rate();
   ESP_LOGI(TAG, "Changing UART baud rate from %u to %u for flashing", original_baud_rate, flashing_baud_rate_);
   this->set_baud_rate(flashing_baud_rate_);
@@ -140,7 +139,7 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // (Firmware download and block flashing logic would go here.)
+  // (Firmware download and flashing code would go here.)
 
   exit_bootloader();
 
@@ -153,7 +152,7 @@ void CC2652FlasherComponent::flash_firmware() {
 
 void CC2652FlasherComponent::setup() {
   ESP_LOGI(TAG, "Setting up CC2652 Flasher Component");
-  // For demonstration, flash_firmware() is called during setup.
+  // For demonstration, we call flash_firmware() during setup.
   // In production, consider registering a service to trigger flashing.
   flash_firmware();
 }
