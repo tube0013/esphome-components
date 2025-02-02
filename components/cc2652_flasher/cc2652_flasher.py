@@ -12,7 +12,7 @@ CONF_FLASHING_BAUD_RATE = "flashing_baud_rate"
 DEPENDENCIES = ["uart", "switch"]
 AUTO_LOAD = ["uart", "switch"]
 
-# Create a namespace for our component.
+# Create a namespace for the component.
 cc2652_flasher_ns = cg.esphome_ns.namespace("cc2652_flasher")
 CC2652FlasherComponent = cc2652_flasher_ns.class_(
     "CC2652FlasherComponent", cg.Component, uart.UARTDevice
@@ -35,4 +35,5 @@ def to_code(config):
     cg.add(var.set_bsl_output(bsl))
     reset = yield cg.get_variable(config["reset_output"])
     cg.add(var.set_reset_output(reset))
-    yield uart.register_uart_device(var, config)
+    uart_component = yield uart.register_uart_device(var, config)
+    cg.add(var.set_uart_component(uart_component))

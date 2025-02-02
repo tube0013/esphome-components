@@ -38,7 +38,6 @@ bool CC2652FlasherComponent::enter_bootloader_mode() {
     return false;
   }
   ESP_LOGI(TAG, "Entering bootloader mode: driving BSL low and pulsing reset");
-  // Activate bootloader mode.
   bsl_output_->turn_off();
   reset_output_->turn_off();
   delay(100);
@@ -125,6 +124,7 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
+  // Here we assume the original baud rate is that of the UART configuration (e.g., 115200).
   uint32_t original_baud_rate = this->get_baud_rate();
   ESP_LOGI(TAG, "Changing UART baud rate from %u to %u for flashing", original_baud_rate, flashing_baud_rate_);
   this->set_baud_rate(flashing_baud_rate_);
@@ -140,8 +140,7 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // Firmware download and flashing logic would be here...
-  // (For brevity, that part of the code is omitted.)
+  // (Firmware download and block flashing logic would go here.)
 
   exit_bootloader();
 
