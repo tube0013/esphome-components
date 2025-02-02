@@ -1,6 +1,7 @@
 #pragma once
 #include "esphome/core/component.h"
-#include "esphome/components/uart/uart_device.h"
+// Include the new UART header from the current ESPHome repository.
+#include "esphome/components/uart/uart.h"
 #include "esphome/components/switch/switch.h"  // Provides esphome::switch_::Switch
 
 namespace esphome {
@@ -8,11 +9,11 @@ namespace cc2652_flasher {
 
 /**
  * CC2652FlasherComponent
- * 
+ *
  * This component flashes a TI CC2652 radio using a bootloader protocol inspired
  * by cc2538-bsl.py. It downloads a manifest that specifies the firmware to flash,
  * temporarily changes the UART baud rate during flashing, and then reverts it back.
- * 
+ *
  * The flashing sequence uses two external outputs (provided as switch_::Switch objects)
  * to control the bootloader (BSL) and reset lines.
  *
