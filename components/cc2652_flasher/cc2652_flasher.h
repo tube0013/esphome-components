@@ -1,7 +1,6 @@
 #pragma once
 #include "esphome/core/component.h"
-// Include the new UART header from the current ESPHome repository.
-#include "esphome/components/uart/uart.h"
+#include "esphome/components/uart/uart.h"      // Use the current UART header.
 #include "esphome/components/switch/switch.h"  // Provides esphome::switch_::Switch
 
 namespace esphome {
@@ -14,8 +13,8 @@ namespace cc2652_flasher {
  * by cc2538-bsl.py. It downloads a manifest that specifies the firmware to flash,
  * temporarily changes the UART baud rate during flashing, and then reverts it back.
  *
- * The flashing sequence uses two external outputs (provided as switch_::Switch objects)
- * to control the bootloader (BSL) and reset lines.
+ * Two external outputs (provided as switch_::Switch objects) are used to control
+ * the bootloader (BSL) and reset lines.
  *
  * IMPORTANT: Verify the command codes, ACK values, and packet structure against your
  * CC2652 bootloader documentation.
@@ -28,7 +27,15 @@ class CC2652FlasherComponent : public Component, public uart::UARTDevice {
   void set_bsl_output(switch_::Switch *bsl_output) { bsl_output_ = bsl_output; }
   void set_reset_output(switch_::Switch *reset_output) { reset_output_ = reset_output; }
 
-  // Trigger the flash process. (You might register a service instead of calling this in setup.)
+  // Inline baud rate accessor functions.
+  uint32_t get_baud_rate() {
+    return this->uart_component_->get_baud_rate();
+  }
+  void set_baud_rate(uint32_t baud) {
+    this->uart_component_->set_baud_rate(baud);
+  }
+
+  /// Trigger the flash process. (In production, you might register a service instead.)
   void flash_firmware();
 
   // Standard ESPHome component interface.
