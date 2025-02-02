@@ -139,7 +139,7 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // (Firmware download and flashing code would go here.)
+  // Insert your firmware download and block flashing code here.
 
   exit_bootloader();
 
@@ -152,9 +152,8 @@ void CC2652FlasherComponent::flash_firmware() {
 
 void CC2652FlasherComponent::setup() {
   ESP_LOGI(TAG, "Setting up CC2652 Flasher Component");
-  // For demonstration, flash_firmware() is called during setup.
-  // In production, consider registering a service to trigger flashing.
-  flash_firmware();
+  // Register a service that triggers the flash process.
+  this->register_service(&CC2652FlasherComponent::flash_firmware, "flash_cc2652");
 }
 
 void CC2652FlasherComponent::loop() {
