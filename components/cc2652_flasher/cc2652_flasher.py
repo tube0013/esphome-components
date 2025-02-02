@@ -18,6 +18,7 @@ CC2652FlasherComponent = cc2652_flasher_ns.class_(
     "CC2652FlasherComponent", cg.Component, uart.UARTDevice
 )
 
+# Note: Do not extend uart.UART_DEVICE_SCHEMA here.
 CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(CC2652FlasherComponent),
     cv.Required("manifest_url"): cv.string,
@@ -25,7 +26,7 @@ CONFIG_SCHEMA = cv.Schema({
     cv.Required("bsl_output"): cv.use_id(switch.Switch),
     cv.Required("reset_output"): cv.use_id(switch.Switch),
     cv.Optional("flashing_baud_rate", default=500000): cv.positive_int,
-}).extend(cv.COMPONENT_SCHEMA).extend(uart.UART_DEVICE_SCHEMA)
+}).extend(cv.COMPONENT_SCHEMA)
 
 def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
@@ -35,5 +36,6 @@ def to_code(config):
     cg.add(var.set_bsl_output(bsl))
     reset = yield cg.get_variable(config["reset_output"])
     cg.add(var.set_reset_output(reset))
+    # Register the UART device and get the pointer.
     uart_component = yield uart.register_uart_device(var, config)
     cg.add(var.set_uart_component(uart_component))
