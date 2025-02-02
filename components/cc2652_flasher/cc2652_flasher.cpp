@@ -1,6 +1,6 @@
 #include "cc2652_flasher.h"
 #include "esphome/core/log.h"
-#include "Arduino.h"         // Use Arduino.h for delay() and millis()
+#include "esphome/core/hal.h"  // Use ESPHome HAL for delay() and millis()
 #include <cstring>
 
 namespace esphome {
