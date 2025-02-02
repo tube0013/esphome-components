@@ -1,6 +1,6 @@
 #include "cc2652_flasher.h"
 #include "esphome/core/log.h"
-#include "esphome/core/hal.h"  // Use ESPHome HAL for delay() and millis()
+#include "esphome/core/hal.h"  // Provides delay() and millis()
 #include <cstring>
 
 namespace esphome {
@@ -38,7 +38,7 @@ bool CC2652FlasherComponent::enter_bootloader_mode() {
     return false;
   }
   ESP_LOGI(TAG, "Entering bootloader mode: driving BSL low and pulsing reset");
-  // Activate bootloader mode:
+  // Activate bootloader mode.
   bsl_output_->turn_off();
   reset_output_->turn_off();
   delay(100);
@@ -78,7 +78,7 @@ bool CC2652FlasherComponent::erase_flash() {
 }
 
 bool CC2652FlasherComponent::write_flash_block(uint32_t address, const uint8_t* data, size_t length) {
-  size_t packet_len = 1 + 4 + 1 + length;  // Without CRC bytes
+  size_t packet_len = 1 + 4 + 1 + length;  // Without CRC bytes.
   uint8_t packet[packet_len + 2];
   size_t pos = 0;
   packet[pos++] = CMD_WRITE;
@@ -140,8 +140,8 @@ void CC2652FlasherComponent::flash_firmware() {
     return;
   }
 
-  // Firmware download and flashing logic would be here...
-  // (For brevity, that part of the code is omitted.)
+  // Download firmware and flash block by block.
+  // (Firmware download code omitted for brevity.)
 
   exit_bootloader();
 
@@ -155,7 +155,7 @@ void CC2652FlasherComponent::flash_firmware() {
 void CC2652FlasherComponent::setup() {
   ESP_LOGI(TAG, "Setting up CC2652 Flasher Component");
   // For demonstration, flash_firmware() is called during setup.
-  // In production, consider registering a service instead.
+  // In production, you might register a service to trigger flashing.
   flash_firmware();
 }
 
