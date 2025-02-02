@@ -152,7 +152,7 @@ void CC2652FlasherComponent::flash_firmware() {
 
 void CC2652FlasherComponent::setup() {
   ESP_LOGI(TAG, "Setting up CC2652 Flasher Component");
-  // For demonstration, we call flash_firmware() during setup.
+  // For demonstration, flash_firmware() is called during setup.
   // In production, consider registering a service to trigger flashing.
   flash_firmware();
 }

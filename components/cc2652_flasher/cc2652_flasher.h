@@ -27,8 +27,10 @@ class CC2652FlasherComponent : public Component, public uart::UARTDevice {
   void set_bsl_output(switch_::Switch *bsl_output) { bsl_output_ = bsl_output; }
   void set_reset_output(switch_::Switch *reset_output) { reset_output_ = reset_output; }
 
-  /// New setter for storing the pointer to the UART component.
+  /// Setter for storing the pointer to the UART component.
   void set_parent_uart(uart::UARTComponent *uart) { parent_uart_ = uart; }
+  /// Dummy overload to satisfy auto-generated calls with no arguments.
+  void set_parent_uart() { /* do nothing */ }
 
   // Inline baud rate accessor functions using the stored UART component pointer.
   uint32_t get_baud_rate() {
