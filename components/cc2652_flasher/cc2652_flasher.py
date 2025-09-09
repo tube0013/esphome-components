@@ -1,4 +1,3 @@
-import os
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart, switch as switch_, text_sensor
@@ -101,11 +100,7 @@ async def detect_variant_action_to_code(config, action_id, template_arg, args):
 
 
 async def to_code(config):
-    # Make this component folder available to the compiler include path so we can
-    # include the local implementation TU portably (works for local path and GitHub).
-    comp_dir = os.path.dirname(__file__)
-    cg.add_build_flag(f'-I"{comp_dir}"')
-    cg.add_global(cg.RawStatement('#include "cc2652_flasher.cpp"'))
+    # Build system will compile cc2652_flasher.cpp and include the header automatically.
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
