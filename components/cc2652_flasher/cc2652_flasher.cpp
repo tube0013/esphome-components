@@ -1308,4 +1308,9 @@ class DetectVariantAction : public esphome::Action<> {
 
 } // namespace cc2652_flasher
 } // namespace esphome
-// ===== end injected implementation =====
+// Provide an out-of-class destructor to act as the key function so the
+// toolchain emits the vtable for CC2652Flasher in this translation unit.
+namespace esphome { namespace cc2652_flasher {
+CC2652Flasher::~CC2652Flasher() {}
+} }
+// ===== end implementation =====
