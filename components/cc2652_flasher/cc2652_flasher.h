@@ -30,6 +30,7 @@ namespace cc2652_flasher {
 
 class CC2652Flasher : public Component {
  public:
+  ~CC2652Flasher() override;
   void set_uart(esphome::uart::UARTComponent *u){ uart_ = u; }
   void set_bsl_switch(esphome::switch_::Switch *s){ bsl_sw_ = s; }
   void set_rst_switch(esphome::switch_::Switch *s){ rst_sw_ = s; }
