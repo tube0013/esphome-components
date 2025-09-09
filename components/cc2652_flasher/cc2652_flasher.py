@@ -55,7 +55,6 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=1, max=60),
         cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
         cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
-        # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
         cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "p2", "p7", "cc2652p2", "cc2652p7", lower=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -100,7 +99,6 @@ async def detect_variant_action_to_code(config, action_id, template_arg, args):
 
 
 async def to_code(config):
-    # Build system will compile cc2652_flasher.cpp and include the header automatically.
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
@@ -151,8 +149,8 @@ async def to_code(config):
     if CONF_DETECT_ON_BOOT_DELAY_MS in config:
         cg.add(var.set_detect_on_boot_delay_ms(config[CONF_DETECT_ON_BOOT_DELAY_MS]))
 
-    # Variant preference (0=auto, 2=P2, 7=P7)
     if CONF_VARIANT in config:
         vstr = config[CONF_VARIANT]
         vmap = {"auto": 0, "p2": 2, "cc2652p2": 2, "p7": 7, "cc2652p7": 7}
         cg.add(var.set_variant(vmap.get(vstr, 0)))
+
