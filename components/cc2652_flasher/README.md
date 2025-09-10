@@ -23,7 +23,7 @@ external_components:
   # optional, for UART streaming/debug
   - source: github://oxan/esphome-stream-server
   # main component
-  - source: github://<your-org-or-user>/<your-repo>
+  - source: github://tube0013/esphome-components
     components: [cc2652_flasher]
 ```
 
@@ -144,4 +144,6 @@ Legacy supported:
 - Requires ESP-IDF framework for ESP32 (Arduino framework is not supported).
 
 ## License
-This component is distributed as part of tube0013/esphome-components. See that repository for license details.
+GPLv3
+
+Written with OpenAI Codex with using https://github.com/xyzroe/XZG/tree/main as a partial reference. 
