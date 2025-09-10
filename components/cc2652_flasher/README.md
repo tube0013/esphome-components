@@ -7,7 +7,7 @@ Flash Texas Instruments CC2652 (P2/P7) Zigbee radios over UART using the ROM boo
   - Order: YAML `variant` override → ROM BSL probe → ZNP SYS_VERSION (if definitive)
 - Manifest with variants (P2/P7) and fallbacks
 - HEX and BIN streaming (Intel HEX parsed on‑device)
-- Erase modes: `sector`, `bank`, `auto`
+- Erase modes: `sector`, `bank` (default), `auto`
 - Actions: update, erase, check update, detect variant
 - Text sensors: current FW code revision, IEEE address, latest manifest version, detected variant
 
@@ -29,6 +29,11 @@ external_components:
 
 ## YAML example
 ```yaml
+esp32:
+  board: esp32-poe
+  framework:
+    type: esp-idf   # This component is ESP-IDF only
+
 uart:
   id: uart_bus
   rx_pin: GPIO36
@@ -47,6 +52,11 @@ switch:
     pin: 16
     inverted: true
     restore_mode: ALWAYS_OFF
+
+# Optional debug stream (remove if not needed)
+stream_server:
+  uart_id: uart_bus
+  port: 6638
 
 cc2652_flasher:
   id: zigbee_flasher
@@ -144,6 +154,9 @@ Legacy supported:
 - Requires ESP-IDF framework for ESP32 (Arduino framework is not supported).
 
 ## License
-GPLv3
+This component is licensed under the GNU General Public License v3.0 (GPLv3).
 
-Written with OpenAI Codex with using https://github.com/xyzroe/XZG/tree/main as a partial reference. 
+- Portions inspired by work in the XZG project (Arduino CC2652 flashing utilities).
+- You should have received a copy of the GNU General Public License
+  along with this program. If not, see https://www.gnu.org/licenses/
+
