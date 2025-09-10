@@ -5,7 +5,8 @@ from esphome.const import CONF_ID, CONF_URL
 from esphome.automation import register_action
 
 DEPENDENCIES = ["uart", "switch"]
-AUTO_LOAD = ["web_server", "text_sensor"]
+# Only pull in what we actually need for linking
+AUTO_LOAD = ["md5", "json"]
 
 CONF_BSL_SWITCH = "bsl_switch"
 CONF_RST_SWITCH = "rst_switch"
@@ -43,7 +44,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Required(CONF_RST_SWITCH): cv.use_id(switch_.Switch),
         cv.Optional(CONF_BOOT_BAUD, default=0): cv.int_range(min=0),
         cv.Optional(CONF_RESTORE_BAUD, default=0): cv.int_range(min=0),
-        cv.Optional(CONF_ERASE_MODE, default="sector"): ERASE_MODE,
+        cv.Optional(CONF_ERASE_MODE, default="bank"): ERASE_MODE,
         cv.Optional(CONF_DEBUG, default=False): cv.boolean,
         cv.Optional(CONF_SHOW_PROGRESS, default=True): cv.boolean,
         cv.Optional(CONF_PROGRESS_STEP, default=5): cv.int_range(min=1, max=50),
@@ -55,6 +56,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=1, max=60),
         cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
         cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
+        # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
         cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "p2", "p7", "cc2652p2", "cc2652p7", lower=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
@@ -99,6 +101,17 @@ async def detect_variant_action_to_code(config, action_id, template_arg, args):
 
 
 async def to_code(config):
+    # Ensure our C++ header is visible to the generated build for both local and GitHub layouts.
+    cg.add_global(cg.RawStatement(
+        "#if __has_include(\"esphome/components/cc2652_flasher/cc2652_flasher.h\")\n"
+        "#  include \"esphome/components/cc2652_flasher/cc2652_flasher.h\"\n"
+        "#elif __has_include(\"cc2652_flasher.h\")\n"
+        "#  include \"cc2652_flasher.h\"\n"
+        "#else\n"
+        "#  error \"cc2652_flasher.h not found\"\n"
+        "#endif"
+    ))
+    # Build system will compile cc2652_flasher.cpp (we also list it in YAML includes).
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
 
@@ -149,8 +162,8 @@ async def to_code(config):
     if CONF_DETECT_ON_BOOT_DELAY_MS in config:
         cg.add(var.set_detect_on_boot_delay_ms(config[CONF_DETECT_ON_BOOT_DELAY_MS]))
 
+    # Variant preference (0=auto, 2=P2, 7=P7)
     if CONF_VARIANT in config:
         vstr = config[CONF_VARIANT]
         vmap = {"auto": 0, "p2": 2, "cc2652p2": 2, "p7": 7, "cc2652p7": 7}
         cg.add(var.set_variant(vmap.get(vstr, 0)))
-

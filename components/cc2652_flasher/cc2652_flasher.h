@@ -37,7 +37,7 @@ class CC2652Flasher : public Component {
   void set_update_url(const std::string &u){ manifest_url_ = u; }
   void set_boot_baud(uint32_t b){ boot_baud_ = b; }
   void set_restore_baud(uint32_t b){ restore_baud_rate_ = b; }
-  void set_erase_mode(uint8_t m){ erase_mode_ = m; }
+  void set_erase_mode(uint8_t m){ erase_mode_ = m; }  // 0=sector,1=bank,2=auto
   void set_verbose(bool v){ verbose_ = v; }
   void set_show_progress(bool v){ show_progress_ = v; }
   void set_progress_step(uint8_t s){ progress_step_ = s ? s : 5; }
@@ -60,6 +60,7 @@ class CC2652Flasher : public Component {
   float get_setup_priority() const override;
 
  private:
+  // internal helpers and state (defined in header for header-only implementation)
   static inline uint8_t sum8_(const uint8_t *d, size_t n){ uint32_t s=0; for(size_t i=0;i<n;i++) s+=d[i]; return (uint8_t)(s&0xFF); }
   static inline bool ends_with_(const std::string &s, const char *suf){ size_t n=std::strlen(suf); return s.size()>=n && s.compare(s.size()-n,n,suf)==0; }
   static inline uint8_t hex2_(char c){ if(c>='0'&&c<='9')return c-'0'; if(c>='A'&&c<='F')return c-'A'+10; if(c>='a'&&c<='f')return c-'a'+10; return 0; }
@@ -179,4 +180,3 @@ class DetectVariantAction : public esphome::Action<> {
 
 } // namespace cc2652_flasher
 } // namespace esphome
-
