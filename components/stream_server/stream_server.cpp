@@ -1,5 +1,6 @@
 #include "stream_server.h"
 
+#include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 #include "esphome/core/util.h"
@@ -34,6 +35,7 @@ void StreamServerComponent::setup() {
 }
 
 void StreamServerComponent::loop() {
+    App.feed_wdt();
     if (this->paused_) {
         // While paused, do not interact with UART or accept new clients.
         this->cleanup();
@@ -41,8 +43,11 @@ void StreamServerComponent::loop() {
     }
     this->accept();
     this->read();
+    App.feed_wdt();
     this->flush();
+    App.feed_wdt();
     this->write();
+    App.feed_wdt();
     this->cleanup();
 }
 
@@ -100,6 +105,7 @@ void StreamServerComponent::read() {
     size_t len = 0;
     int available;
     while ((available = this->stream_->available()) > 0) {
+        App.feed_wdt();
         size_t free = this->buf_size_ - (this->buf_head_ - this->buf_tail_);
         if (free == 0) {
             // Only overwrite if nothing has been added yet, otherwise give flush() a chance to empty the buffer first.
@@ -136,6 +142,7 @@ void StreamServerComponent::flush() {
     ssize_t written;
     this->buf_tail_ = this->buf_head_;
     for (Client &client : this->clients_) {
+        App.feed_wdt();
         if (client.disconnected || client.position == this->buf_head_)
             continue;
 
@@ -171,8 +178,10 @@ void StreamServerComponent::write() {
     for (Client &client : this->clients_) {
         if (client.disconnected)
             continue;
+        App.feed_wdt();
 
         while ((read = client.socket->read(&buf, sizeof(buf))) > 0) {
+            App.feed_wdt();
             if (this->trace_) {
                 char dump[3 * 32 + 1];
                 size_t dlen = read > 32 ? 32 : (size_t) read;

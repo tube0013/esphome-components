@@ -118,6 +118,7 @@ class EFR32InfoComponent : public Component {
   std::vector<uint8_t> last_tx_payload_{};
   uint8_t last_tx_seq_{0};
   bool have_last_tx_{false};
+  uint8_t ezsp_protocol_version_{0};
 };
 
 class EFR32InfoProbeAction : public esphome::Action<> {

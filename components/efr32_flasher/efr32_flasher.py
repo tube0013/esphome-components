@@ -22,6 +22,8 @@ CONF_MANUF_ID_TEXT = "manuf_id_text"
 CONF_BOARD_NAME_TEXT = "board_name_text"
 CONF_MFG_STRING_TEXT = "mfg_string_text"
 CONF_CHIP_TEXT = "chip_text"
+CONF_BAUD_RATE = "baud_rate"
+CONF_BOOT_BAUD_RATE = "bootloader_baud_rate"
 CONF_VARIANT = "variant"
 CONF_BUSY_BINARY_SENSOR = "busy_binary_sensor"
 efr32_ns = cg.esphome_ns.namespace("efr32_flasher")
@@ -51,6 +53,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_BOARD_NAME_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_MFG_STRING_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_CHIP_TEXT): cv.use_id(text_sensor.TextSensor),
+        cv.Optional(CONF_BAUD_RATE, default=0): cv.int_range(min=0, max=921600),
+        cv.Optional(CONF_BOOT_BAUD_RATE, default=115200): cv.int_range(min=9600, max=921600),
         cv.Optional(CONF_PAUSE_SWITCH): cv.use_id(switch_.Switch),
         cv.Optional(CONF_BUSY_BINARY_SENSOR): cv.use_id(binary_sensor.BinarySensor),
         # variant: auto | MGM24 | BM24 (case-insensitive)
@@ -91,6 +95,10 @@ async def to_code(config):
     cg.add(var.set_uart(uart_comp))
     cg.add(var.set_bl_switch(bl))
     cg.add(var.set_rst_switch(rst))
+    if config[CONF_BAUD_RATE] > 0:
+        cg.add(var.set_runtime_baud_rate(config[CONF_BAUD_RATE]))
+    if CONF_BOOT_BAUD_RATE in config:
+        cg.add(var.set_bootloader_baud_rate(config[CONF_BOOT_BAUD_RATE]))
 
     if CONF_DEBUG in config:
         cg.add(var.set_verbose(config[CONF_DEBUG]))

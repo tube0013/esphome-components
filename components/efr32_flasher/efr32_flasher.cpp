@@ -15,6 +15,11 @@
 #include "esphome/components/switch/switch.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/md5/md5.h"
+
+#ifdef USE_ESP_IDF
+#include "esphome/components/uart/uart_component_esp_idf.h"
+#include "driver/uart.h"
+#endif
 #include <ArduinoJson.h>
 
 #ifdef USE_ESP_IDF
@@ -60,6 +65,52 @@ EFR32Flasher::~EFR32Flasher() {}
 void EFR32Flasher::setup(){
   // Avoid any UART activity at boot to prevent consuming ASH startup frames.
   // If needed, a manual probe action can be invoked later.
+  this->apply_runtime_baud_();
+}
+
+void EFR32Flasher::set_uart_baud_(uint32_t baud) {
+  if (this->uart_ == nullptr)
+    return;
+  if (baud == 0)
+    return;
+  if (this->uart_->get_baud_rate() == baud) {
+    ESP_LOGV(TAG, "UART baud rate already %u", static_cast<unsigned>(baud));
+    return;
+  }
+
+  // Ensure any outstanding TX completes before retuning the peripheral.
+  this->uart_->flush();
+
+  this->uart_->set_baud_rate(baud);
+#if defined(USE_ESP8266) || defined(USE_ESP32)
+  this->uart_->load_settings(false);
+#endif
+#ifdef USE_ESP_IDF
+  if (this->uart_ != nullptr) {
+    auto *idf_uart = static_cast<esphome::uart::IDFUARTComponent *>(this->uart_);
+    uart_port_t port = static_cast<uart_port_t>(idf_uart->get_hw_serial_number());
+    uart_set_pin(port, 4, 36, 2, 13);
+    uart_set_hw_flow_ctrl(port, UART_HW_FLOWCTRL_CTS_RTS, 122);
+  }
+#endif
+  // Give the hardware a moment to settle at the new rate.
+  delay_(100);
+  uint32_t reported = this->uart_->get_baud_rate();
+  ESP_LOGD(TAG, "UART baud rate set to %u (reported=%u)", static_cast<unsigned>(baud),
+           static_cast<unsigned>(reported));
+}
+
+void EFR32Flasher::apply_runtime_baud_() {
+  uint32_t baud = runtime_baud_rate_;
+  if (baud == 0 && this->uart_ != nullptr) {
+    baud = this->uart_->get_baud_rate();
+    runtime_baud_rate_ = baud;
+  }
+  set_uart_baud_(baud);
+}
+
+void EFR32Flasher::apply_bootloader_baud_() {
+  set_uart_baud_(bootloader_baud_rate_);
 }
 
 void EFR32Flasher::delay_(uint32_t ms){
@@ -132,6 +183,7 @@ bool EFR32Flasher::http_open_(const std::string &url, esp_http_client_handle_t &
 }
 
 bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_out){
+  ESP_LOGI(TAG, "fetch_manifest: url=%s", url.c_str());
   // Use perform API to follow redirects automatically and accumulate full body
   std::string body; body.reserve(1024);
   esp_http_client_config_t cfg = {};
@@ -248,9 +300,25 @@ bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t conten
   uint32_t last_cr = 0;
   bool resent_menu_6s = false;
   bool resent_menu_12s = false;
+  uint8_t sample_buf[32];
+  size_t sample_len = 0;
+  uint32_t last_report = 0;
   while (millis() - tstart < 15000){
     uint8_t b;
-    if (read_byte_(b, 250) && b == CCHR) { got_c = true; break; }
+    if (read_byte_(b, 250)) {
+      if (b == CCHR) {
+        got_c = true;
+        break;
+      }
+      if (sample_len < sizeof(sample_buf)) {
+        sample_buf[sample_len++] = b;
+      }
+      uint32_t now = millis();
+      if (now - last_report > 1000) {
+        ESP_LOGD(TAG, "Bootloader RX byte 0x%02X while waiting for 'C'", static_cast<unsigned>(b));
+        last_report = now;
+      }
+    }
     uint32_t elapsed = millis() - tstart;
     if (elapsed >= 3000 && (elapsed - last_cr) >= 2000) {
       ESP_LOGD(TAG, "No 'C' yet (~%us), sending CR to prompt bootloader", (unsigned)(elapsed/1000));
@@ -271,6 +339,15 @@ bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t conten
     }
   }
   if (!got_c){
+    if (sample_len > 0) {
+      char buf[3 * sizeof(sample_buf) + 1];
+      size_t pos = 0;
+      for (size_t i = 0; i < sample_len && pos + 3 < sizeof(buf); i++) {
+        pos += std::snprintf(buf + pos, sizeof(buf) - pos, "%02X", static_cast<unsigned>(sample_buf[i]));
+      }
+      buf[pos] = '\0';
+      ESP_LOGW(TAG, "Bootloader received unexpected bytes while waiting for 'C': %s", buf);
+    }
     ESP_LOGE(TAG, "Receiver did not send 'C' to start XMODEM");
     return false;
   }
@@ -326,6 +403,9 @@ void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t 
 }
 
 void EFR32Flasher::run_update_(){
+  apply_runtime_baud_();
+  ESP_LOGI(TAG, "run_update start variant_force=%u override='%s'", static_cast<unsigned>(variant_force_),
+           variant_key_override_.c_str());
   if(!uart_ || !bl_sw_ || !rst_sw_){ ESP_LOGE(TAG, "Not configured (uart/switches)"); return; }
   variant_key_override_.clear();
   if (variant_force_ == 0){
@@ -334,6 +414,7 @@ void EFR32Flasher::run_update_(){
       ESP_LOGW(TAG, "Auto variant detection did not yield a match; using manifest fallback");
     }
   }
+  ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
   set_busy_(true);
   std::string fw_url;
   if (!fetch_manifest_(manifest_url_, fw_url)) { ESP_LOGE(TAG, "Manifest fetch/parse failed"); set_busy_(false); return; }
@@ -344,7 +425,9 @@ void EFR32Flasher::run_update_(){
   int64_t len64 = esp_http_client_get_content_length(client);
   uint32_t content_len = len64 > 0 ? (uint32_t)len64 : 0;
 
+  apply_bootloader_baud_();
   enter_bootloader_();
+  ESP_LOGD(TAG, "Bootloader entered, starting upload");
   // Allow BL banner/prompt to appear, then select '1' (upload gbl)
   delay_(1000);
   // Nudge BL prompt
@@ -361,6 +444,8 @@ void EFR32Flasher::run_update_(){
   esp_http_client_close(client); esp_http_client_cleanup(client);
 
   leave_bootloader_();
+  apply_runtime_baud_();
+  ESP_LOGI(TAG, "run_update finished ok=%d", ok ? 1 : 0);
   if (ok) {
     ESP_LOGI(TAG, "EFR32 update finished OK. Waiting for NCP start marker…");
     if (wait_for_ncp_start_(1500)) {
@@ -375,6 +460,7 @@ void EFR32Flasher::run_update_(){
 }
 
 void EFR32Flasher::run_check_update_(){
+  apply_runtime_baud_();
   ESP_LOGI(TAG, "Checking EFR32 firmware manifest…");
   if (variant_force_ == 0 && variant_key_override_.empty()){
     variant_key_override_ = detect_variant_key_();
@@ -382,6 +468,8 @@ void EFR32Flasher::run_check_update_(){
       ESP_LOGW(TAG, "Auto variant detection did not yield a match; using manifest fallback");
     }
   }
+  ESP_LOGD(TAG, "run_check_update variant override='%s' force=%u", variant_key_override_.c_str(),
+           static_cast<unsigned>(variant_force_));
   std::string fw_url;
   if (!fetch_manifest_(manifest_url_, fw_url)) { ESP_LOGE(TAG, "Manifest fetch/parse failed"); return; }
   if (!manifest_version_.empty() && latest_text_) latest_text_->publish_state(manifest_version_.c_str());

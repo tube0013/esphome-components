@@ -476,24 +476,29 @@ void EFR32InfoComponent::parse_unsolicited_ezsp_(const std::vector<uint8_t> &ezs
 }
 
 bool EFR32InfoComponent::parse_token_reply_(const std::vector<uint8_t> &resp, std::string &out) {
-  if (resp.size() < 7)
+  if (resp.size() < 6)
     return false;
-  uint8_t length = 0;
-  size_t start = 0;
-  if (resp[5] == 0x00 && resp.size() >= 8) {
-    length = resp[6];
-    start = 7;
-  } else {
-    length = resp[5];
-    start = 6;
+
+  size_t pos = 5;
+  uint8_t status = 0x00;
+  if (pos < resp.size() && (resp[pos] == 0x00 || resp[pos] == 0x0D)) {
+    status = resp[pos++];
   }
-  if (start >= resp.size())
+  if (status != 0x00) {
+    ESP_LOGW(TAG, "Token reply status=0x%02X resp=%s", static_cast<unsigned>(status),
+             bytes_to_hex_(resp, 24).c_str());
     return false;
-  if (start + length > resp.size())
-    length = static_cast<uint8_t>(resp.size() - start);
+  }
+  if (pos >= resp.size())
+    return false;
+
+  uint8_t length = resp[pos++];
+  if (pos + length > resp.size())
+    length = static_cast<uint8_t>(resp.size() - pos);
   if (length == 0)
     return false;
-  std::vector<uint8_t> data(resp.begin() + start, resp.begin() + start + length);
+
+  std::vector<uint8_t> data(resp.begin() + pos, resp.begin() + pos + length);
   std::string text = extract_ascii_(data);
   if (text.empty())
     text = bytes_to_hex_(data, 32);
@@ -502,33 +507,44 @@ bool EFR32InfoComponent::parse_token_reply_(const std::vector<uint8_t> &resp, st
 }
 
 bool EFR32InfoComponent::parse_v8_version_reply_(const std::vector<uint8_t> &resp) {
-  if (resp.size() < 9)
+  if (resp.size() < 7) {
+    ESP_LOGW(TAG, "VERSION(min) reply too short resp=%s", bytes_to_hex_(resp, 24).c_str());
     return false;
-  if (!(resp[1] == 0x80 && resp[2] == 0x01 && resp[3] == 0x00 && resp[4] == 0x00))
-    return false;
-  uint8_t status = resp[5];
-  bool status_ok = (status == 0x00 || status == 0x0D);
+  }
+  if (!(resp[1] == 0x80 && resp[2] == 0x01 && resp[3] == 0x00 && resp[4] == 0x00)) {
+    ESP_LOGW(TAG, "Unexpected VERSION(min) header resp=%s", bytes_to_hex_(resp, 24).c_str());
+  }
 
-  uint8_t stack_type = resp[6];
-  uint16_t stack_version = static_cast<uint16_t>(resp[7]) | (static_cast<uint16_t>(resp[8]) << 8);
+  size_t pos = 5;
+  uint8_t protocol_version = resp[pos];
+
+  if (resp.size() <= pos + 1) {
+    ESP_LOGW(TAG, "VERSION(min) payload truncated resp=%s", bytes_to_hex_(resp, 24).c_str());
+    return false;
+  }
+
+  uint8_t stack_type = resp[pos + 1];
+  if (resp.size() <= pos + 3) {
+    ESP_LOGW(TAG, "VERSION(min) missing stack version resp=%s", bytes_to_hex_(resp, 24).c_str());
+    return false;
+  }
+  uint16_t stack_version = static_cast<uint16_t>(resp[pos + 2]) |
+                           (static_cast<uint16_t>(resp[pos + 3]) << 8);
   unsigned A = (stack_version >> 12) & 0x0F;
   unsigned B = (stack_version >> 8) & 0x0F;
   unsigned C = (stack_version >> 4) & 0x0F;
   unsigned D = stack_version & 0x0F;
   char buf[80];
-  std::snprintf(buf, sizeof(buf), "type=0x%02X ver=%u.%u.%u.%u (0x%04X) status=0x%02X",
-                static_cast<unsigned>(stack_type), A, B, C, D, static_cast<unsigned>(stack_version),
-                static_cast<unsigned>(status));
+  std::snprintf(buf, sizeof(buf), "type=0x%02X ver=%u.%u.%u.%u (0x%04X)",
+                static_cast<unsigned>(stack_type), A, B, C, D, static_cast<unsigned>(stack_version));
   last_stack_version_ = buf;
   publish_text_(stack_version_sensor_, last_stack_version_);
   char fw_buf[32];
   std::snprintf(fw_buf, sizeof(fw_buf), "%u.%u.%u.%u", A, B, C, D);
   last_firmware_ = fw_buf;
   publish_text_(firmware_sensor_, last_firmware_);
-  if (!status_ok) {
-    ESP_LOGW(TAG, "VERSION(min) returned status=0x%02X", static_cast<unsigned>(status));
-  }
-  return status_ok;
+  ezsp_protocol_version_ = protocol_version;
+  return true;
 }
 
 void EFR32InfoComponent::ack_re_sync_() {
@@ -880,8 +896,15 @@ bool EFR32InfoComponent::wait_for_ezsp_(int expected_seq, uint16_t expected_fram
         if (ezsp.size() < 5) {
           continue;
         }
-       uint8_t seq = ezsp[0];
-       uint16_t frame_id = static_cast<uint16_t>(ezsp[3]) | (static_cast<uint16_t>(ezsp[4]) << 8);
+        uint8_t seq = ezsp[0];
+        uint16_t frame_id = static_cast<uint16_t>(ezsp[3]) | (static_cast<uint16_t>(ezsp[4]) << 8);
+        if (frame_id == 0x0058) {
+          uint8_t status = ezsp.size() >= 6 ? ezsp[5] : 0xFF;
+          ESP_LOGW(TAG, "EZSP invalidCommand seq=%u status=0x%02X (expected=0x%04X)",
+                   static_cast<unsigned>(seq), static_cast<unsigned>(status),
+                   static_cast<unsigned>(expected_frame_id));
+          return false;
+        }
         ESP_LOGV(TAG, "wait_ezsp got seq=%u frame_id=0x%04X len=%zu", static_cast<unsigned>(seq),
                  static_cast<unsigned>(frame_id), ezsp.size());
 
@@ -994,6 +1017,7 @@ void EFR32InfoComponent::run_probe_() {
   last_delivered_seq_ = 0;
   bootstrap_seq_known_ = false;
   saw_rstack_ = false;
+  ezsp_protocol_version_ = 0;
   ESP_LOGI(TAG, "Starting EZSP info probe");
   set_busy_(true);
   bool paused_stream = false;
@@ -1046,6 +1070,7 @@ void EFR32InfoComponent::run_probe_() {
     set_busy_(false);
     return;
   }
+  ESP_LOGD(TAG, "v4 VERSION(min) handshake complete");
 
   auto build_ezsp = [](uint8_t seq, uint16_t frame_id, std::initializer_list<uint8_t> payload) {
     std::vector<uint8_t> frame;
@@ -1077,48 +1102,64 @@ void EFR32InfoComponent::run_probe_() {
                              std::vector<uint8_t> &resp_out) -> bool {
     uint8_t seq = ezsp_seq;
     ezsp_seq = static_cast<uint8_t>(ezsp_seq + 1);
+    ESP_LOGD(TAG, "Probe sending EZSP 0x%04X seq=%u timeout=%u", static_cast<unsigned>(frame_id),
+             static_cast<unsigned>(seq), static_cast<unsigned>(timeout_ms));
     bool ok = send_and_expect(seq, frame_id, payload, timeout_ms, resp_out);
     if (!ok) {
-      ESP_LOGW(TAG, "EZSP command 0x%04X seq=%u timed out", static_cast<unsigned>(frame_id),
+      ESP_LOGW(TAG, "EZSP command 0x%04X seq=%u failed", static_cast<unsigned>(frame_id),
                static_cast<unsigned>(seq));
+    } else {
+      ESP_LOGD(TAG, "Probe received EZSP 0x%04X seq=%u len=%zu", static_cast<unsigned>(frame_id),
+               static_cast<unsigned>(seq), resp_out.size());
     }
     return ok;
   };
 
+  const uint8_t requested_protocol = 0x0E;
   {
     std::vector<uint8_t> resp;
-    if (send_expect_seq(0x0000, {0x0D}, 2500, resp)) {
+    if (send_expect_seq(0x0000, {requested_protocol}, 2500, resp)) {
       if (parse_v8_version_reply_(resp))
         ok_version = true;
+      uint8_t negotiated = ezsp_protocol_version_;
+      if (negotiated != 0 && negotiated != requested_protocol) {
+        ESP_LOGI(TAG, "EZSP protocol negotiated version %u", static_cast<unsigned>(negotiated));
+        std::vector<uint8_t> resp_confirm;
+        if (send_expect_seq(0x0000, {negotiated}, 2000, resp_confirm)) {
+          parse_v8_version_reply_(resp_confirm);
+        }
+      }
     }
   }
 
   {
     std::vector<uint8_t> resp;
-    if (send_expect_seq(0x0001, {}, 900, resp)) {
-      std::string text;
+    if (send_expect_seq(0x0017, {0x00, 0x00}, 1500, resp)) {
       if (resp.size() >= 6) {
         uint8_t status = resp[5];
         char buf[32];
-        std::snprintf(buf, sizeof(buf), "status=0x%02X", static_cast<unsigned>(status));
-        text = buf;
-        ESP_LOGI(TAG, "Library status=0x%02X", static_cast<unsigned>(status));
+        std::snprintf(buf, sizeof(buf), "sl=0x%02X", static_cast<unsigned>(status));
+        last_library_status_ = buf;
+        publish_text_(library_status_sensor_, last_library_status_);
+        ESP_LOGI(TAG, "networkInit status=0x%02X", static_cast<unsigned>(status));
       } else {
-        text = "raw=" + bytes_to_hex_(resp, 24);
-        ESP_LOGW(TAG, "Library status short response len=%zu", resp.size());
+        last_library_status_ = "sl=?";
+        publish_text_(library_status_sensor_, last_library_status_);
       }
-      last_library_status_ = text;
+    } else {
+      ESP_LOGW(TAG, "networkInit command failed");
+      last_library_status_ = "init-failed";
       publish_text_(library_status_sensor_, last_library_status_);
     }
   }
 
   {
     std::vector<uint8_t> resp;
-    if (send_expect_seq(0x0013, {}, 900, resp) && resp.size() >= 7 && resp[5] == 0x00) {
-      uint8_t state = resp[6];
+    if (send_expect_seq(0x0018, {}, 900, resp) && resp.size() >= 6) {
+      uint8_t state = resp[5];
       last_network_status_ = network_status_to_string(state);
       publish_text_(network_status_sensor_, last_network_status_);
-      ESP_LOGI(TAG, "Network status=0x%02X (%s)", static_cast<unsigned>(state),
+      ESP_LOGI(TAG, "Network state=0x%02X (%s)", static_cast<unsigned>(state),
                last_network_status_.c_str());
     }
   }
@@ -1126,7 +1167,12 @@ void EFR32InfoComponent::run_probe_() {
   {
     std::vector<uint8_t> resp;
     if (send_expect_seq(0x0028, {}, 900, resp)) {
-      if (resp.size() >= 26 && resp[5] == 0x00) {
+      if (resp.size() >= 26) {
+        uint8_t status = resp[5];
+        if (!(status == 0x00 || status == 0x17)) {
+          ESP_LOGW(TAG, "Network parameters status=0x%02X resp=%s", static_cast<unsigned>(status),
+                   bytes_to_hex_(resp, 48).c_str());
+        }
         size_t pos = 7;  // start of EmberNetworkParameters
         std::vector<uint8_t> ext_pan(resp.begin() + pos, resp.begin() + pos + 8);
         pos += 8;
@@ -1158,8 +1204,10 @@ void EFR32InfoComponent::run_probe_() {
         ESP_LOGI(TAG, "PAN %s manager=0x%04X join_method=0x%02X", pan_buf,
                  static_cast<unsigned>(manager_id), static_cast<unsigned>(join_method));
 
-        last_network_status_ = "joined";
-        publish_text_(network_status_sensor_, last_network_status_);
+        if (status == 0x17) {
+          last_network_status_ = "joined";
+          publish_text_(network_status_sensor_, last_network_status_);
+        }
       } else {
         ESP_LOGW(TAG, "Network parameters unexpected resp=%s", bytes_to_hex_(resp, 48).c_str());
       }
@@ -1272,28 +1320,34 @@ void EFR32InfoComponent::run_probe_() {
 
   {
     std::vector<uint8_t> resp;
-    if (send_expect_seq(0x0018, {}, 800, resp) && resp.size() >= 7 && resp[5] == 0x00) {
-      uint8_t state = resp[6];
-      last_network_status_ = network_status_to_string(state);
-      publish_text_(network_status_sensor_, last_network_status_);
+    if (send_expect_seq(0x0018, {}, 800, resp) && resp.size() >= 6) {
+      uint8_t status = resp[5];
+      uint8_t state = resp.size() >= 7 ? resp[6] : 0xFF;
+      if (status == 0x00 || status == 0x17) {
+        last_network_status_ = network_status_to_string(state);
+        publish_text_(network_status_sensor_, last_network_status_);
+      }
     }
   }
 
   {
     std::vector<uint8_t> resp;
     if (send_expect_seq(0x0069, {}, 900, resp)) {
-      if (resp.size() >= 8 && resp[5] == 0x00) {
-        uint16_t bitmask = static_cast<uint16_t>(resp[6]) | (static_cast<uint16_t>(resp[7]) << 8);
-        char buf[48];
-        std::snprintf(buf, sizeof(buf), "mask=0x%04X", static_cast<unsigned>(bitmask));
-        last_security_state_ = buf;
-        publish_text_(security_state_sensor_, last_security_state_);
-        ESP_LOGI(TAG, "Security bitmask=0x%04X", static_cast<unsigned>(bitmask));
-      } else {
-        std::string hex = bytes_to_hex_(resp, 32);
-        last_security_state_ = "raw=" + hex;
-        publish_text_(security_state_sensor_, last_security_state_);
-        ESP_LOGW(TAG, "Security state unexpected resp=%s", hex.c_str());
+      if (resp.size() >= 8) {
+        uint8_t status = resp[5];
+        if (status == 0x00 || status == 0x17) {
+          uint16_t bitmask = static_cast<uint16_t>(resp[6]) | (static_cast<uint16_t>(resp[7]) << 8);
+          char buf[48];
+          std::snprintf(buf, sizeof(buf), "mask=0x%04X", static_cast<unsigned>(bitmask));
+          last_security_state_ = buf;
+          publish_text_(security_state_sensor_, last_security_state_);
+          ESP_LOGI(TAG, "Security bitmask=0x%04X", static_cast<unsigned>(bitmask));
+        } else {
+          std::string hex = bytes_to_hex_(resp, 32);
+          last_security_state_ = "raw=" + hex;
+          publish_text_(security_state_sensor_, last_security_state_);
+          ESP_LOGW(TAG, "Security state status=0x%02X resp=%s", static_cast<unsigned>(status), hex.c_str());
+        }
       }
     }
   }
@@ -1314,6 +1368,8 @@ void EFR32InfoComponent::run_probe_() {
     ESP_LOGI(TAG, "Stream server resumed after probe");
   }
   set_busy_(false);
+  ESP_LOGI(TAG, "EZSP info probe complete (version=%s tokens=%s)", ok_version ? "ok" : "partial",
+           tokens_ok ? "ok" : "missing");
 }
 
 }  // namespace efr32_info

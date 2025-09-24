@@ -37,6 +37,8 @@ class EFR32Flasher : public Component {
   void set_verbose(bool v){ verbose_ = v; }
   void set_show_progress(bool v){ show_progress_ = v; }
   void set_progress_step(uint8_t s){ progress_step_ = s ? s : 5; }
+  void set_runtime_baud_rate(uint32_t baud){ runtime_baud_rate_ = baud; }
+  void set_bootloader_baud_rate(uint32_t baud){ bootloader_baud_rate_ = baud; }
   void set_fw_text_sensor(esphome::text_sensor::TextSensor *t){ fw_text_ = t; }
   void set_latest_text_sensor(esphome::text_sensor::TextSensor *t){ latest_text_ = t; }
   void set_ezsp_protocol_text(esphome::text_sensor::TextSensor *t){ ezsp_protocol_text_ = t; }
@@ -87,6 +89,9 @@ class EFR32Flasher : public Component {
   void run_update_();
   void run_check_update_();
   inline void set_busy_(bool on){ if (busy_sensor_) busy_sensor_->publish_state(on); }
+  void apply_runtime_baud_();
+  void apply_bootloader_baud_();
+  void set_uart_baud_(uint32_t baud);
 
   // State
   esphome::uart::UARTComponent *uart_{nullptr};
@@ -110,6 +115,8 @@ class EFR32Flasher : public Component {
   bool verbose_{false};
   bool show_progress_{true};
   uint8_t progress_step_{5};
+  uint32_t runtime_baud_rate_{0};
+  uint32_t bootloader_baud_rate_{115200};
   std::string manifest_version_{};
   std::string expected_md5_{};
   uint32_t expected_size_{0};
