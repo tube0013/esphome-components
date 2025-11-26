@@ -89,7 +89,7 @@ protected:
 template<typename... Ts> class PauseAction : public esphome::Action<Ts...> {
  public:
   explicit PauseAction(StreamServerComponent *parent) : parent_(parent) {}
-  void play(Ts... x) override { this->parent_->pause(); }
+  void play(const Ts &...x) override { this->parent_->pause(); }
 
  protected:
   StreamServerComponent *parent_;
@@ -98,7 +98,7 @@ template<typename... Ts> class PauseAction : public esphome::Action<Ts...> {
 template<typename... Ts> class ResumeAction : public esphome::Action<Ts...> {
  public:
   explicit ResumeAction(StreamServerComponent *parent) : parent_(parent) {}
-  void play(Ts... x) override { this->parent_->resume(); }
+  void play(const Ts &...x) override { this->parent_->resume(); }
 
  protected:
   StreamServerComponent *parent_;
