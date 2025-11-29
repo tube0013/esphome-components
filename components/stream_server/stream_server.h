@@ -24,6 +24,11 @@ public:
     void set_buffer_size(size_t size) { this->buf_size_ = size; }
     void pause();
     void resume();
+    void set_keep_alive(int idle_s, int interval_s, int count) {
+        this->keep_alive_idle_s_ = idle_s;
+        this->keep_alive_interval_s_ = interval_s;
+        this->keep_alive_count_ = count;
+    }
     void set_trace(bool v) { this->trace_ = v; }
 
 #ifdef USE_BINARY_SENSOR
@@ -84,6 +89,10 @@ protected:
 
     bool paused_{false};
     bool trace_{false};
+
+    int keep_alive_idle_s_{0};
+    int keep_alive_interval_s_{0};
+    int keep_alive_count_{0};
 };
 
 template<typename... Ts> class PauseAction : public esphome::Action<Ts...> {

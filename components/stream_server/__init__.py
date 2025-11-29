@@ -17,6 +17,10 @@ StreamServerComponent = ns.class_("StreamServerComponent", cg.Component)
 PauseAction = ns.class_("PauseAction", automation.Action)
 ResumeAction = ns.class_("ResumeAction", automation.Action)
 
+CONF_KEEP_ALIVE = "keep_alive"
+CONF_IDLE_TIME = "idle_time"
+CONF_INTERVAL = "interval"
+CONF_COUNT = "count"
 
 def validate_buffer_size(buffer_size):
     if buffer_size & (buffer_size - 1) != 0:
@@ -34,6 +38,13 @@ CONFIG_SCHEMA = cv.All(
                 cv.positive_int, validate_buffer_size
             ),
             cv.Optional("trace", default=False): cv.boolean,
+            cv.Optional(CONF_KEEP_ALIVE): cv.Schema(
+                {
+                    cv.Required(CONF_IDLE_TIME): cv.positive_time_period_seconds,
+                    cv.Required(CONF_INTERVAL): cv.positive_time_period_seconds,
+                    cv.Required(CONF_COUNT): cv.positive_int,
+                }
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -47,6 +58,13 @@ async def to_code(config):
     cg.add(var.set_buffer_size(config[CONF_BUFFER_SIZE]))
     if "trace" in config:
         cg.add(var.set_trace(config["trace"]))
+    if CONF_KEEP_ALIVE in config:
+        keep_alive_config = config[CONF_KEEP_ALIVE]
+        cg.add(
+            var.set_keep_alive(
+                keep_alive_config[CONF_IDLE_TIME], keep_alive_config[CONF_INTERVAL], keep_alive_config[CONF_COUNT]
+            )
+        )
 
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
