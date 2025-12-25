@@ -89,6 +89,27 @@ void StreamServerComponent::accept() {
     if (!socket)
         return;
 
+    if (this->keep_alive_idle_s_ > 0) {
+        int fd = socket->get_fd();
+        int val = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) != 0) {
+            ESP_LOGW(TAG, "setsockopt SO_KEEPALIVE failed: %s", strerror(errno));
+        } else {
+            val = this->keep_alive_idle_s_;
+            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) != 0) {
+                ESP_LOGW(TAG, "setsockopt TCP_KEEPIDLE failed: %s", strerror(errno));
+            }
+            val = this->keep_alive_interval_s_;
+            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) != 0) {
+                ESP_LOGW(TAG, "setsockopt TCP_KEEPINTVL failed: %s", strerror(errno));
+            }
+            val = this->keep_alive_count_;
+            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) != 0) {
+                ESP_LOGW(TAG, "setsockopt TCP_KEEPCNT failed: %s", strerror(errno));
+            }
+        }
+    }
+
     socket->setblocking(false);
     std::string identifier = socket->getpeername();
     this->clients_.emplace_back(std::move(socket), identifier, this->buf_head_);
