@@ -33,6 +33,14 @@ namespace esphome { namespace efr32_flasher {
 
 static const char *const TAG = "efr32_flasher";
 
+static bool ends_with_ignore_query_(const std::string &s, const char *suffix) {
+  size_t end = s.find_first_of("?#");
+  if (end == std::string::npos) end = s.size();
+  size_t n = std::strlen(suffix);
+  if (end < n) return false;
+  return strncasecmp(s.c_str() + end - n, suffix, n) == 0;
+}
+
 // Forward declarations for ASH helpers
 void write_escaped_(esphome::uart::UARTComponent *uart, const uint8_t *data, size_t len);
 bool recv_ash_frame_(esphome::uart::UARTComponent *uart, std::vector<uint8_t> &out, uint32_t timeout_ms);
@@ -183,6 +191,15 @@ bool EFR32Flasher::http_open_(const std::string &url, esp_http_client_handle_t &
 }
 
 bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_out){
+  if (ends_with_ignore_query_(url, ".gbl")) {
+    fw_url_out = url;
+    ESP_LOGI(TAG, "Direct GBL URL configured; skipping manifest fetch");
+    return true;
+  }
+  if (ends_with_ignore_query_(url, ".hex") || ends_with_ignore_query_(url, ".bin")) {
+    ESP_LOGE(TAG, "HEX/BIN firmware is for CC2652, not EFR32. Use a .gbl file.");
+    return false;
+  }
   ESP_LOGI(TAG, "fetch_manifest: url=%s", url.c_str());
   // Use perform API to follow redirects automatically and accumulate full body
   std::string body; body.reserve(1024);
@@ -417,8 +434,13 @@ void EFR32Flasher::run_update_(){
   ESP_LOGD(TAG, "Detected override='%s'", variant_key_override_.c_str());
   set_busy_(true);
   std::string fw_url;
-  if (!fetch_manifest_(manifest_url_, fw_url)) { ESP_LOGE(TAG, "Manifest fetch/parse failed"); set_busy_(false); return; }
-  ESP_LOGI(TAG, "Firmware: %s", fw_url.c_str());
+  if (ends_with_ignore_query_(manifest_url_, ".gbl")) {
+    fw_url = manifest_url_;
+    ESP_LOGI(TAG, "Using direct firmware URL (no manifest): %s", fw_url.c_str());
+  } else {
+    if (!fetch_manifest_(manifest_url_, fw_url)) { ESP_LOGE(TAG, "Manifest fetch/parse failed"); set_busy_(false); return; }
+    ESP_LOGI(TAG, "Firmware: %s", fw_url.c_str());
+  }
 
   esp_http_client_handle_t client;
   if(!http_open_(fw_url, client)) { ESP_LOGE(TAG, "Firmware HTTP open failed"); set_busy_(false); return; }
@@ -462,6 +484,14 @@ void EFR32Flasher::run_update_(){
 void EFR32Flasher::run_check_update_(){
   apply_runtime_baud_();
   ESP_LOGI(TAG, "Checking EFR32 firmware manifest…");
+  if (manifest_url_.empty()) {
+    ESP_LOGW(TAG, "No manifest URL configured; skipping update check.");
+    return;
+  }
+  if (ends_with_ignore_query_(manifest_url_, ".gbl")) {
+    ESP_LOGW(TAG, "Custom firmware URL configured; skipping manifest update check.");
+    return;
+  }
   if (variant_force_ == 0 && variant_key_override_.empty()){
     variant_key_override_ = detect_variant_key_();
     if (variant_key_override_.empty()){
