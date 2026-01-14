@@ -156,16 +156,21 @@ void EFR32Flasher::flush_uart_(){
 }
 
 bool EFR32Flasher::http_open_(const std::string &url, esp_http_client_handle_t &client, int timeout_ms){
-  std::string cur = url;
+  esp_http_client_config_t cfg = {};
+  cfg.url = url.c_str();
+  cfg.timeout_ms = timeout_ms;
+  cfg.crt_bundle_attach = esp_crt_bundle_attach;
+  cfg.disable_auto_redirect = true; // handle redirects manually for reliability
+  cfg.buffer_size = 4096;
+  cfg.buffer_size_tx = 1024;
+  client = esp_http_client_init(&cfg);
+  if(!client) return false;
+
   for (int redirects = 0; redirects < 5; redirects++){
-    esp_http_client_config_t cfg = {};
-    cfg.url = cur.c_str();
-    cfg.timeout_ms = timeout_ms;
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.disable_auto_redirect = true; // handle redirects manually for reliability
-    client = esp_http_client_init(&cfg);
-    if(!client) return false;
-    if(esp_http_client_open(client, 0) != ESP_OK){ esp_http_client_cleanup(client); return false; }
+    if(esp_http_client_open(client, 0) != ESP_OK){
+      esp_http_client_cleanup(client);
+      return false;
+    }
 
     (void)esp_http_client_fetch_headers(client);
     int status = esp_http_client_get_status_code(client);
@@ -173,12 +178,13 @@ bool EFR32Flasher::http_open_(const std::string &url, esp_http_client_handle_t &
       return true;
     }
     if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308){
-      // Try to follow Location header
-      char *loc = nullptr;
-      esp_http_client_get_header(client, "Location", &loc);
-      ESP_LOGW(TAG, "HTTP redirect %d to: %s", status, (loc && *loc) ? loc : "<none>");
-      esp_http_client_close(client); esp_http_client_cleanup(client);
-      if (loc && *loc){ cur = loc; continue; }
+      ESP_LOGW(TAG, "HTTP redirect %d; following", status);
+      esp_http_client_close(client);
+      if (esp_http_client_set_redirection(client) == ESP_OK) {
+        continue;
+      }
+      ESP_LOGE(TAG, "HTTP redirect without Location header");
+      esp_http_client_cleanup(client);
       return false;
     }
     char first[256]; int n = esp_http_client_read(client, first, sizeof(first));
@@ -186,7 +192,8 @@ bool EFR32Flasher::http_open_(const std::string &url, esp_http_client_handle_t &
     esp_http_client_close(client); esp_http_client_cleanup(client);
     return false;
   }
-  ESP_LOGE(TAG, "Too many HTTP redirects while fetching: %s", cur.c_str());
+  ESP_LOGE(TAG, "Too many HTTP redirects while fetching: %s", url.c_str());
+  esp_http_client_cleanup(client);
   return false;
 }
 
