@@ -92,7 +92,7 @@ class CC2652Flasher : public Component {
     this->set_timeout(700, [this](){ this->query_znp_info_(); });
     // Second attempt later in case the first was too early.
     this->set_timeout(4500, [this](){ this->query_znp_info_(); });
-    if (check_on_boot_) this->set_timeout(5000, [this](){ this->start_check_update(); });
+    if (check_on_boot_) this->set_timeout(4000, [this](){ this->start_check_update(); });
     // Weekly check by default
     this->set_interval(check_interval_ms_, [this](){ this->start_check_update(); });
   }
@@ -175,7 +175,7 @@ class CC2652Flasher : public Component {
   }
 
   // ---------- HTTP ----------
-  bool http_open_(const std::string &url, esp_http_client_handle_t &client, int timeout_ms=30000){
+  bool http_open_(const std::string &url, esp_http_client_handle_t &client, int timeout_ms=4000){
     esp_http_client_config_t cfg = {};
     cfg.url = url.c_str();
     cfg.timeout_ms = timeout_ms;
@@ -184,6 +184,7 @@ class CC2652Flasher : public Component {
 
     client = esp_http_client_init(&cfg);
     if(!client) return false;
+    feed_(); // Note: WDT feed in between each http_client call might be needed
     if(esp_http_client_open(client, 0) != ESP_OK) return false;
 
     (void)esp_http_client_fetch_headers(client);
@@ -199,7 +200,7 @@ class CC2652Flasher : public Component {
 
  bool fetch_manifest_(const std::string &url, std::string &fw_url_out){
     esp_http_client_handle_t client;
-    if(!http_open_(url, client, 15000)) return false;
+    if(!http_open_(url, client)) return false;
 
     std::string body; body.reserve(1024);
     char buf[1024]; int r;
@@ -1184,7 +1185,7 @@ class CC2652Flasher : public Component {
     // After restoring normal UART, query ZNP info to refresh sensors without reboot
     if (ok) {
       this->set_timeout(1200, [this](){ this->query_znp_info_(); });
-      this->set_timeout(5000, [this](){ this->query_znp_info_(); });
+      this->set_timeout(4000, [this](){ this->query_znp_info_(); });
     }
   }
 
