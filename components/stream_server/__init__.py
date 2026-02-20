@@ -90,3 +90,6 @@ async def stream_server_pause_to_code(config, action_id, template_arg, args):
 async def stream_server_resume_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
+
+# Request UART to wake the main loop when data arrives for low-latency processing
+uart.request_wake_loop_on_rx()
