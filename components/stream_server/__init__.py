@@ -92,4 +92,6 @@ async def stream_server_resume_to_code(config, action_id, template_arg, args):
     return cg.new_Pvariable(action_id, template_arg, parent)
 
 # Request UART to wake the main loop when data arrives for low-latency processing
-#uart.request_wake_loop_on_rx()
+# Apply the fix only for versions 2025.12.x through 2026.2.x
+if (2025, 12, 0) <= esphome_version < (2026, 3, 0):
+    uart.request_wake_loop_on_rx()
