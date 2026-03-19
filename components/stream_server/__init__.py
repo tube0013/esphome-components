@@ -3,6 +3,7 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart
 from esphome.const import CONF_ID, CONF_PORT, CONF_BUFFER_SIZE
+from esphome.util import parse_esphome_version
 
 # ESPHome doesn't know the Stream abstraction yet, so hardcode to use a UART for now.
 
@@ -70,7 +71,9 @@ async def to_code(config):
     await uart.register_uart_device(var, config)
 
     # Request UART to wake the main loop when data arrives for low-latency processing
-    uart.request_wake_loop_on_rx()
+    # Apply the fix only for versions 2025.12.x through 2026.2.x
+    if (2025, 12, 0) <= esphome_version < (2026, 3, 0):
+        uart.request_wake_loop_on_rx()
 
 @automation.register_action(
     "stream_server.pause",
@@ -90,8 +93,3 @@ async def stream_server_pause_to_code(config, action_id, template_arg, args):
 async def stream_server_resume_to_code(config, action_id, template_arg, args):
     parent = await cg.get_variable(config[CONF_ID])
     return cg.new_Pvariable(action_id, template_arg, parent)
-
-# Request UART to wake the main loop when data arrives for low-latency processing
-# Apply the fix only for versions 2025.12.x through 2026.2.x
-if (2025, 12, 0) <= esphome_version < (2026, 3, 0):
-    uart.request_wake_loop_on_rx()
