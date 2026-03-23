@@ -72,7 +72,7 @@ async def to_code(config):
 
     # Request UART to wake the main loop when data arrives for low-latency processing
     # Apply the fix only for versions 2025.12.x through 2026.2.x
-    if (2025, 12, 0) <= parse_esphome_version < (2026, 3, 0):
+    if (2025, 12, 0) <= parse_esphome_version() < (2026, 3, 0):
         uart.request_wake_loop_on_rx()
 
 @automation.register_action(
