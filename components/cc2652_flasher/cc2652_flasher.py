@@ -53,7 +53,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_LATEST_FW_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_VARIANT_TEXT): cv.use_id(text_sensor.TextSensor),
         cv.Optional(CONF_CHECK_ON_BOOT, default=True): cv.boolean,
-        cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=1, max=60),
+        cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=0, max=60),
         cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
         cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
         # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
