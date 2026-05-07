@@ -9,7 +9,17 @@
 #include "esphome/components/network/util.h"
 #include "esphome/components/socket/socket.h"
 
+#include <algorithm>
+#include <cerrno>
+#include <cstring>
+
 static const char *TAG = "stream_server";
+
+namespace {
+bool is_retryable_socket_error(int err) {
+    return err == EWOULDBLOCK || err == EAGAIN || err == EINTR;
+}
+}  // namespace
 
 using namespace esphome;
 
@@ -61,24 +71,27 @@ void StreamServerComponent::dump_config() {
 #ifdef USE_BINARY_SENSOR
     LOG_BINARY_SENSOR("  ", "Connected:", this->connected_sensor_);
 #endif
-#ifdef USE_SENSOR
-    LOG_SENSOR("  ", "Connection count:", this->connection_count_sensor_);
-#endif
 }
 
 void StreamServerComponent::on_shutdown() {
-    for (const Client &client : this->clients_)
+    if (this->client_.has_value())
+        this->close_client_(*this->client_);
+    this->client_.reset();
+}
+
+void StreamServerComponent::close_client_(Client &client) {
+    if (client.socket) {
         client.socket->shutdown(SHUT_RDWR);
+        client.socket->close();
+        client.socket.reset();
+    }
+    client.disconnected = true;
 }
 
 void StreamServerComponent::publish_sensor() {
 #ifdef USE_BINARY_SENSOR
     if (this->connected_sensor_)
-        this->connected_sensor_->publish_state(this->clients_.size() > 0);
-#endif
-#ifdef USE_SENSOR
-    if (this->connection_count_sensor_)
-        this->connection_count_sensor_->publish_state(this->clients_.size());
+        this->connected_sensor_->publish_state(this->client_.has_value());
 #endif
 }
 
@@ -89,23 +102,30 @@ void StreamServerComponent::accept() {
     if (!socket)
         return;
 
-    if (this->keep_alive_idle_s_ > 0) {
+    {
         int fd = socket->get_fd();
         int val = 1;
-        if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) != 0) {
-            ESP_LOGW(TAG, "setsockopt SO_KEEPALIVE failed: %s", strerror(errno));
-        } else {
-            val = this->keep_alive_idle_s_;
-            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) != 0) {
-                ESP_LOGW(TAG, "setsockopt TCP_KEEPIDLE failed: %s", strerror(errno));
-            }
-            val = this->keep_alive_interval_s_;
-            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) != 0) {
-                ESP_LOGW(TAG, "setsockopt TCP_KEEPINTVL failed: %s", strerror(errno));
-            }
-            val = this->keep_alive_count_;
-            if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) != 0) {
-                ESP_LOGW(TAG, "setsockopt TCP_KEEPCNT failed: %s", strerror(errno));
+        // Disable Nagle algorithm to prevent the Nagle+delayed-ACK deadlock on Ethernet-connected
+        // Linux hosts (HA server). Without TCP_NODELAY, Linux delayed ACK (up to 40ms) stalls small
+        // Zigbee/Z-Wave frames: the ESP waits for ACK (Nagle) while Linux waits to piggyback ACK,
+        // causing per-frame stalls that break coordinator timing. Critical at all baud rates;
+        // more severe at 460800/921600 baud with EFR32 NCP/RCP firmware.
+        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) != 0)
+            ESP_LOGW(TAG, "setsockopt TCP_NODELAY failed: %s", strerror(errno));
+
+        if (this->keep_alive_idle_s_ > 0) {
+            if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) != 0) {
+                ESP_LOGW(TAG, "setsockopt SO_KEEPALIVE failed: %s", strerror(errno));
+            } else {
+                val = this->keep_alive_idle_s_;
+                if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &val, sizeof(val)) != 0)
+                    ESP_LOGW(TAG, "setsockopt TCP_KEEPIDLE failed: %s", strerror(errno));
+                val = this->keep_alive_interval_s_;
+                if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &val, sizeof(val)) != 0)
+                    ESP_LOGW(TAG, "setsockopt TCP_KEEPINTVL failed: %s", strerror(errno));
+                val = this->keep_alive_count_;
+                if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &val, sizeof(val)) != 0)
+                    ESP_LOGW(TAG, "setsockopt TCP_KEEPCNT failed: %s", strerror(errno));
             }
         }
     }
@@ -120,16 +140,23 @@ void StreamServerComponent::accept() {
     std::string identifier = socket->getpeername();
 #endif
 
-    this->clients_.emplace_back(std::move(socket), identifier, this->buf_head_);
+    if (this->client_.has_value()) {
+        ESP_LOGW(TAG, "Closing existing client %s for new connection from %s",
+                 this->client_->identifier.c_str(), identifier.c_str());
+        this->close_client_(*this->client_);
+        this->client_.reset();
+        this->buf_tail_ = this->buf_head_;
+    }
+
+    this->client_.emplace(std::move(socket), identifier, this->buf_head_);
     ESP_LOGD(TAG, "New client connected from %s", identifier.c_str());
     this->publish_sensor();
 }
 
 void StreamServerComponent::cleanup() {
-    auto discriminator = [](const Client &client) { return !client.disconnected; };
-    auto last_client = std::partition(this->clients_.begin(), this->clients_.end(), discriminator);
-    if (last_client != this->clients_.end()) {
-        this->clients_.erase(last_client, this->clients_.end());
+    if (this->client_.has_value() && this->client_->disconnected) {
+        this->client_.reset();
+        this->buf_tail_ = this->buf_head_;
         this->publish_sensor();
     }
 }
@@ -148,11 +175,10 @@ void StreamServerComponent::read() {
             ESP_LOGE(TAG, "Incoming bytes available, but outgoing buffer is full: stream will be corrupted!");
             free = std::min<size_t>(available, this->buf_size_);
             this->buf_tail_ += free;
-            for (Client &client : this->clients_) {
-                if (client.position < this->buf_tail_) {
-                    ESP_LOGW(TAG, "Dropped %u pending bytes for client %s", this->buf_tail_ - client.position, client.identifier.c_str());
-                    client.position = this->buf_tail_;
-                }
+            if (this->client_.has_value() && this->client_->position < this->buf_tail_) {
+                ESP_LOGW(TAG, "Dropped %u pending bytes for client %s",
+                         this->buf_tail_ - this->client_->position, this->client_->identifier.c_str());
+                this->client_->position = this->buf_tail_;
             }
         }
 
@@ -172,66 +198,71 @@ void StreamServerComponent::read() {
 }
 
 void StreamServerComponent::flush() {
-    ssize_t written;
-    this->buf_tail_ = this->buf_head_;
-    for (Client &client : this->clients_) {
-        App.feed_wdt();
-        if (client.disconnected || client.position == this->buf_head_)
-            continue;
-
-        // Split the write into two parts: from the current position to the end of the ring buffer, and from the start
-        // of the ring buffer until the head. The second part might be zero if no wraparound is necessary.
-        struct iovec iov[2];
-        iov[0].iov_base = &this->buf_[this->buf_index(client.position)];
-        iov[0].iov_len = std::min(this->buf_head_ - client.position, this->buf_ahead(client.position));
-        iov[1].iov_base = &this->buf_[0];
-        iov[1].iov_len = this->buf_head_ - (client.position + iov[0].iov_len);
-        if ((written = client.socket->writev(iov, 2)) > 0) {
-            client.position += written;
-            if (this->trace_) {
-                ESP_LOGD(TAG, "ring -> client %s: %d bytes", client.identifier.c_str(), (int) written);
-            }
-        } else if (written == 0 || errno == ECONNRESET) {
-            ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
-            client.disconnected = true;
-            continue;  // don't consider this client when calculating the tail position
-        } else if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            // Expected if the (TCP) transmit buffer is full, nothing to do.
-        } else {
-            ESP_LOGE(TAG, "Failed to write to client %s with error %d!", client.identifier.c_str(), errno);
-        }
-
-        this->buf_tail_ = std::min(this->buf_tail_, client.position);
+    if (!this->client_.has_value() || this->client_->disconnected ||
+            this->client_->position == this->buf_head_) {
+        this->buf_tail_ = this->buf_head_;
+        return;
     }
+
+    Client &client = *this->client_;
+    App.feed_wdt();
+
+    // Split the write into two parts: from the current position to the end of the ring buffer, and from the start
+    // of the ring buffer until the head. The second part might be zero if no wraparound is necessary.
+    struct iovec iov[2];
+    iov[0].iov_base = &this->buf_[this->buf_index(client.position)];
+    iov[0].iov_len = std::min(this->buf_head_ - client.position, this->buf_ahead(client.position));
+    iov[1].iov_base = &this->buf_[0];
+    iov[1].iov_len = this->buf_head_ - (client.position + iov[0].iov_len);
+    ssize_t written = client.socket->writev(iov, 2);
+    if (written > 0) {
+        client.position += written;
+        if (this->trace_)
+            ESP_LOGD(TAG, "ring -> client %s: %d bytes", client.identifier.c_str(), (int) written);
+    } else if (written == 0) {
+        ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
+        this->close_client_(client);
+    } else {
+        int err = errno;
+        if (!is_retryable_socket_error(err)) {
+            ESP_LOGE(TAG, "Failed to write to client %s with error %d, closing socket", client.identifier.c_str(), err);
+            this->close_client_(client);
+        }
+    }
+
+    // If the client disconnected this flush, free the ring buffer; otherwise hold it at the client's position.
+    this->buf_tail_ = client.disconnected ? this->buf_head_ : client.position;
 }
 
 void StreamServerComponent::write() {
+    if (!this->client_.has_value() || this->client_->disconnected)
+        return;
+
+    Client &client = *this->client_;
+    App.feed_wdt();
+
     uint8_t buf[128];
-    ssize_t read;
-    for (Client &client : this->clients_) {
-        if (client.disconnected)
-            continue;
+    ssize_t nread;
+    while ((nread = client.socket->read(buf, sizeof(buf))) > 0) {
         App.feed_wdt();
-
-        while ((read = client.socket->read(&buf, sizeof(buf))) > 0) {
-            App.feed_wdt();
-            if (this->trace_) {
-                char dump[3 * 32 + 1];
-                size_t dlen = read > 32 ? 32 : (size_t) read;
-                for (size_t i = 0; i < dlen; i++) snprintf(&dump[i * 3], 4, "%02X ", buf[i]);
-                dump[dlen * 3] = 0;
-                ESP_LOGD(TAG, "TCP <- client %s: %d bytes (sample: %s)%s", client.identifier.c_str(), (int) read, dump, read > (ssize_t) dlen ? "…" : "");
-            }
-            this->stream_->write_array(buf, read);
+        if (this->trace_) {
+            char dump[3 * 32 + 1];
+            size_t dlen = nread > 32 ? 32 : (size_t) nread;
+            for (size_t i = 0; i < dlen; i++) snprintf(&dump[i * 3], 4, "%02X ", buf[i]);
+            dump[dlen * 3] = 0;
+            ESP_LOGD(TAG, "TCP <- client %s: %d bytes (sample: %s)%s", client.identifier.c_str(), (int) nread, dump, nread > (ssize_t) dlen ? "…" : "");
         }
+        this->stream_->write_array(buf, nread);
+    }
 
-        if (read == 0 || errno == ECONNRESET) {
-            ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
-            client.disconnected = true;
-        } else if (errno == EWOULDBLOCK || errno == EAGAIN) {
-            // Expected if the (TCP) receive buffer is empty, nothing to do.
-        } else {
-            ESP_LOGW(TAG, "Failed to read from client %s with error %d!", client.identifier.c_str(), errno);
+    if (nread == 0) {
+        ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
+        this->close_client_(client);
+    } else if (nread < 0) {
+        int err = errno;
+        if (!is_retryable_socket_error(err)) {
+            ESP_LOGW(TAG, "Failed to read from client %s with error %d, closing socket", client.identifier.c_str(), err);
+            this->close_client_(client);
         }
     }
 }
@@ -244,12 +275,8 @@ void StreamServerComponent::pause() {
         return;
     this->paused_ = true;
     ESP_LOGI(TAG, "Pausing stream server and disconnecting clients");
-    for (Client &client : this->clients_) {
-        if (!client.disconnected && client.socket) {
-            client.socket->shutdown(SHUT_RDWR);
-            client.disconnected = true;
-        }
-    }
+    if (this->client_.has_value())
+        this->close_client_(*this->client_);
     this->cleanup();
 }
 
