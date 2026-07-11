@@ -62,7 +62,7 @@ CONFIG_SCHEMA = cv.Schema(
 ).extend(cv.COMPONENT_SCHEMA)
 
 
-@register_action("cc2652_flasher.update_firmware", UpdateFirmwareAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}))
+@register_action("cc2652_flasher.update_firmware", UpdateFirmwareAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}), synchronous=False)
 async def update_firmware_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
@@ -74,6 +74,7 @@ async def update_firmware_action_to_code(config, action_id, template_arg, args):
     "cc2652_flasher.erase_flash",
     EraseFlashAction,
     cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher), cv.Optional(CONF_ERASE_MODE, default="auto"): ERASE_MODE}),
+    synchronous=False,
 )
 async def erase_flash_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
@@ -84,7 +85,7 @@ async def erase_flash_action_to_code(config, action_id, template_arg, args):
     return act
 
 
-@register_action("cc2652_flasher.check_update", CheckUpdateAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}))
+@register_action("cc2652_flasher.check_update", CheckUpdateAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}), synchronous=False)
 async def check_update_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
@@ -92,7 +93,7 @@ async def check_update_action_to_code(config, action_id, template_arg, args):
     return act
 
 
-@register_action("cc2652_flasher.detect_variant", DetectVariantAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}))
+@register_action("cc2652_flasher.detect_variant", DetectVariantAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}), synchronous=False)
 async def detect_variant_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])

@@ -63,7 +63,7 @@ CONFIG_SCHEMA = cv.Schema(
 ).extend(cv.COMPONENT_SCHEMA)
 
 
-@register_action("efr32_flasher.update_firmware", UpdateFirmwareAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}))
+@register_action("efr32_flasher.update_firmware", UpdateFirmwareAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}), synchronous=False)
 async def update_firmware_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
@@ -71,7 +71,7 @@ async def update_firmware_action_to_code(config, action_id, template_arg, args):
     return act
 
 
-@register_action("efr32_flasher.check_update", CheckUpdateAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}))
+@register_action("efr32_flasher.check_update", CheckUpdateAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32Flasher)}), synchronous=False)
 async def check_update_action_to_code(config, action_id, template_arg, args):
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])

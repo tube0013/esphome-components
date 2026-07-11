@@ -68,6 +68,7 @@ CONFIG_SCHEMA = cv.Schema(
     "efr32_info.probe",
     EFR32InfoProbeAction,
     cv.Schema({cv.Required(CONF_ID): cv.use_id(EFR32InfoComponent)}),
+    synchronous=False,
 )
 async def efr32_info_probe_to_code(config, action_id, template_arg, args):
     action = cg.new_Pvariable(action_id)
