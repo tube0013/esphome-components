@@ -13,11 +13,22 @@
 #include <cerrno>
 #include <cstring>
 
+// Direct IDF UART access for non-blocking TX (uart_tx_chars): only available on
+// esp-idf builds, and get_hw_serial_number() only exists on recent ESPHome.
+#if defined(USE_ESP_IDF) && ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 3, 0)
+#define STREAM_SERVER_IDF_FIFO_TX
+#include "esphome/components/uart/uart_component_esp_idf.h"
+#include <driver/uart.h>
+#endif
+
 static const char *TAG = "stream_server";
 
 namespace {
 bool is_retryable_socket_error(int err) {
-    return err == EWOULDBLOCK || err == EAGAIN || err == EINTR;
+    // ENOMEM/ENOBUFS: LwIP runs out of pbufs/segments transiently during bursts of
+    // small TCP_NODELAY writes (e.g. an EZSP startup); the pool frees as ACKs arrive,
+    // so treat as retryable instead of tearing down the client session.
+    return err == EWOULDBLOCK || err == EAGAIN || err == EINTR || err == ENOMEM || err == ENOBUFS;
 }
 }  // namespace
 
@@ -37,15 +48,34 @@ void StreamServerComponent::setup() {
 #endif
 
     this->socket_ = socket::socket_ip(SOCK_STREAM, PF_INET);
+    if (!this->socket_) {
+        ESP_LOGE(TAG, "Failed to create listening socket");
+        this->mark_failed();
+        return;
+    }
     this->socket_->setblocking(false);
     this->socket_->bind(reinterpret_cast<struct sockaddr *>(&bind_addr), bind_addrlen);
     this->socket_->listen(8);
+
+#ifdef STREAM_SERVER_IDF_FIFO_TX
+    this->uart_num_ = static_cast<esphome::uart::IDFUARTComponent *>(this->stream_)->get_hw_serial_number();
+#endif
+
+    this->setup_complete_ = true;
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
+    // If pause() ran before setup (e.g. an on_boot automation at a priority >= ours),
+    // it could not touch the loop state; apply the deferred disable now.
+    if (this->paused_)
+        this->disable_loop();
+#endif
 
     this->publish_sensor();
 }
 
 void StreamServerComponent::loop() {
     App.feed_wdt();
+    if (!this->socket_)
+        return;  // defensive: never loop without a listening socket
     if (this->paused_) {
         // While paused, do not interact with UART or accept new clients.
         this->cleanup();
@@ -98,9 +128,52 @@ void StreamServerComponent::publish_sensor() {
 #endif
 }
 
+static std::string peer_identifier(esphome::socket::Socket *socket) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
+    std::string identifier = std::string(esphome::socket::SOCKADDR_STR_LEN, 0);
+    auto identifier_span = std::span<char, esphome::socket::SOCKADDR_STR_LEN>(identifier.data(), identifier.size());
+    identifier.resize(socket->getpeername_to(identifier_span));
+    // getpeername_to() formats only the address; the pre-2026.1 getpeername() string
+    // included the client port, which is what support logs want — re-append it.
+    struct sockaddr_storage storage;
+    socklen_t slen = sizeof(storage);
+    if (socket->getpeername(reinterpret_cast<struct sockaddr *>(&storage), &slen) == 0 &&
+            storage.ss_family == AF_INET) {
+        char port[8];
+        snprintf(port, sizeof(port), ":%u",
+                 ntohs(reinterpret_cast<struct sockaddr_in *>(&storage)->sin_port));
+        identifier += port;
+    }
+    return identifier;
+#else
+    return socket->getpeername();
+#endif
+}
+
 void StreamServerComponent::accept() {
     struct sockaddr_storage client_addr;
     socklen_t client_addrlen = sizeof(client_addr);
+
+    // The serial stream can only serve one consumer, so while a client is connected,
+    // refuse newcomers instead of dropping the established session: a stray probe
+    // (nc, discovery scan) must not be able to kill an active ZHA/Z2M connection.
+    if (this->client_.has_value() && !this->client_->disconnected) {
+        std::unique_ptr<socket::Socket> rejected;
+        while ((rejected = this->socket_->accept(reinterpret_cast<struct sockaddr *>(&client_addr), &client_addrlen))) {
+            App.feed_wdt();
+            ESP_LOGW(TAG, "Refusing connection from %s: client %s is already connected",
+                     peer_identifier(rejected.get()).c_str(), this->client_->identifier.c_str());
+            // Close with an immediate RST instead of a FIN: a normal close would park the
+            // PCB in TIME_WAIT for ~2 minutes, letting a probe/retry storm exhaust the
+            // LwIP socket pool. The RST also tells the prober unambiguously to go away.
+            struct linger lin = {1, 0};
+            setsockopt(rejected->get_fd(), SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+            rejected->close();
+            client_addrlen = sizeof(client_addr);
+        }
+        return;
+    }
+
     std::unique_ptr<socket::Socket> socket = this->socket_->accept(reinterpret_cast<struct sockaddr *>(&client_addr), &client_addrlen);
     if (!socket)
         return;
@@ -135,18 +208,10 @@ void StreamServerComponent::accept() {
 
     socket->setblocking(false);
 
-#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
-    std::string identifier = std::string{esphome::socket::SOCKADDR_STR_LEN, 0};
-    auto identifier_span = std::span<char, esphome::socket::SOCKADDR_STR_LEN>(identifier.data(), identifier.size());
-    identifier.resize(socket->getpeername_to(identifier_span));
-#else
-    std::string identifier = socket->getpeername();
-#endif
+    std::string identifier = peer_identifier(socket.get());
 
+    // Release a client that disconnected but hasn't been reaped by cleanup() yet.
     if (this->client_.has_value()) {
-        ESP_LOGW(TAG, "Closing existing client %s for new connection from %s",
-                 this->client_->identifier.c_str(), identifier.c_str());
-        this->close_client_(*this->client_);
         this->client_.reset();
         this->buf_tail_ = this->buf_head_;
     }
@@ -178,7 +243,10 @@ void StreamServerComponent::read() {
             ESP_LOGE(TAG, "Incoming bytes available, but outgoing buffer is full: stream will be corrupted!");
             free = std::min<size_t>(available, this->buf_size_);
             this->buf_tail_ += free;
-            if (this->client_.has_value() && this->client_->position < this->buf_tail_) {
+            // Wrap-safe comparison: the position counters are free-running and wrap after
+            // 4 GB of traffic, so compare via difference, never with absolute < or >.
+            if (this->client_.has_value() &&
+                    (ssize_t) (this->buf_tail_ - this->client_->position) > 0) {
                 ESP_LOGW(TAG, "Dropped %u pending bytes for client %s",
                          this->buf_tail_ - this->client_->position, this->client_->identifier.c_str());
                 this->client_->position = this->buf_tail_;
@@ -238,15 +306,112 @@ void StreamServerComponent::flush() {
 }
 
 void StreamServerComponent::write() {
-    if (!this->client_.has_value() || this->client_->disconnected)
+#ifdef STREAM_SERVER_IDF_FIFO_TX
+    // Drain leftover bytes from a previous pass first, even if the client is gone:
+    // they were already accepted from TCP and belong on the wire.
+    if (this->tx_pending_pos_ < this->tx_pending_len_) {
+        int sent = uart_tx_chars(static_cast<uart_port_t>(this->uart_num_),
+                                 reinterpret_cast<const char *>(&this->tx_pending_[this->tx_pending_pos_]),
+                                 this->tx_pending_len_ - this->tx_pending_pos_);
+        if (sent > 0) {
+            this->tx_pending_pos_ += (size_t) sent;
+            this->tx_stall_since_ = 0;
+        }
+        if (this->tx_pending_pos_ < this->tx_pending_len_) {
+            // FIFO not draining at all means the radio is holding CTS. Wait a bounded
+            // time, then drop the staged bytes so the loop can go back to idle pace;
+            // the client's TCP stream is corrupt at that point anyway.
+            const uint32_t now = esphome::millis();
+            if (this->tx_stall_since_ == 0) {
+                this->tx_stall_since_ = now;
+            } else if (now - this->tx_stall_since_ > 5000) {
+                ESP_LOGE(TAG, "UART TX stalled for 5s (radio holding CTS?), dropping %u staged bytes",
+                         (unsigned) (this->tx_pending_len_ - this->tx_pending_pos_));
+                this->tx_pending_len_ = this->tx_pending_pos_ = 0;
+                this->tx_stall_since_ = 0;
+                this->high_freq_.stop();
+                return;
+            }
+            this->high_freq_.start();
+            return;  // TX FIFO still full (or CTS held); don't read more from TCP.
+        }
+    }
+#endif
+
+    if (!this->client_.has_value() || this->client_->disconnected) {
+#ifdef STREAM_SERVER_IDF_FIFO_TX
+        this->high_freq_.stop();
+#endif
         return;
+    }
 
     Client &client = *this->client_;
     App.feed_wdt();
 
+#ifdef STREAM_SERVER_IDF_FIFO_TX
+    // Forward TCP -> UART via uart_tx_chars(), which fills the 128-byte hardware TX
+    // FIFO and returns without blocking. ESPHome installs the IDF UART driver with no
+    // TX ring buffer, so write_array() blocks until every byte is on the wire — and
+    // blocks forever if the radio holds CTS with hardware flow control. Whatever the
+    // FIFO won't take stays in tx_pending_ and we stop reading from the socket until
+    // it drains, so a stalled radio backpressures the TCP client via the TCP window
+    // instead of wedging the main loop.
+    while (true) {
+        ssize_t nread = client.socket->read(this->tx_pending_, sizeof(this->tx_pending_));
+        if (nread == 0) {
+            ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
+            this->close_client_(client);
+            this->high_freq_.stop();
+            return;
+        }
+        if (nread < 0) {
+            int err = errno;
+            if (!is_retryable_socket_error(err)) {
+                ESP_LOGW(TAG, "Failed to read from client %s with error %d, closing socket", client.identifier.c_str(), err);
+                this->close_client_(client);
+            }
+            this->high_freq_.stop();  // backlog clear and no more socket data for now
+            return;
+        }
+        App.feed_wdt();
+        if (this->trace_) {
+            char dump[3 * 32 + 1];
+            size_t dlen = nread > 32 ? 32 : (size_t) nread;
+            for (size_t i = 0; i < dlen; i++) snprintf(&dump[i * 3], 4, "%02X ", this->tx_pending_[i]);
+            dump[dlen * 3] = 0;
+            ESP_LOGD(TAG, "TCP <- client %s: %d bytes (sample: %s)%s", client.identifier.c_str(), (int) nread, dump, nread > (ssize_t) dlen ? "…" : "");
+        }
+        this->tx_pending_len_ = (size_t) nread;
+        this->tx_pending_pos_ = 0;
+        int sent = uart_tx_chars(static_cast<uart_port_t>(this->uart_num_),
+                                 reinterpret_cast<const char *>(this->tx_pending_), this->tx_pending_len_);
+        if (sent > 0)
+            this->tx_pending_pos_ = (size_t) sent;
+        if (this->tx_pending_pos_ < this->tx_pending_len_) {
+            this->high_freq_.start();
+            return;  // FIFO full; the remainder goes out on the next pass.
+        }
+    }
+#else
+    // Fallback for non-IDF builds: write_array() can block for the UART transmission
+    // time, so bound the bytes forwarded per pass to keep the main loop responsive.
     uint8_t buf[128];
-    ssize_t nread;
-    while ((nread = client.socket->read(buf, sizeof(buf))) > 0) {
+    size_t total = 0;
+    while (total < 1024) {
+        ssize_t nread = client.socket->read(buf, sizeof(buf));
+        if (nread == 0) {
+            ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
+            this->close_client_(client);
+            return;
+        }
+        if (nread < 0) {
+            int err = errno;
+            if (!is_retryable_socket_error(err)) {
+                ESP_LOGW(TAG, "Failed to read from client %s with error %d, closing socket", client.identifier.c_str(), err);
+                this->close_client_(client);
+            }
+            return;
+        }
         App.feed_wdt();
         if (this->trace_) {
             char dump[3 * 32 + 1];
@@ -256,18 +421,9 @@ void StreamServerComponent::write() {
             ESP_LOGD(TAG, "TCP <- client %s: %d bytes (sample: %s)%s", client.identifier.c_str(), (int) nread, dump, nread > (ssize_t) dlen ? "…" : "");
         }
         this->stream_->write_array(buf, nread);
+        total += (size_t) nread;
     }
-
-    if (nread == 0) {
-        ESP_LOGD(TAG, "Client %s disconnected", client.identifier.c_str());
-        this->close_client_(client);
-    } else if (nread < 0) {
-        int err = errno;
-        if (!is_retryable_socket_error(err)) {
-            ESP_LOGW(TAG, "Failed to read from client %s with error %d, closing socket", client.identifier.c_str(), err);
-            this->close_client_(client);
-        }
-    }
+#endif
 }
 
 StreamServerComponent::Client::Client(std::unique_ptr<esphome::socket::Socket> socket, std::string identifier, size_t position)
@@ -281,6 +437,20 @@ void StreamServerComponent::pause() {
     if (this->client_.has_value())
         this->close_client_(*this->client_);
     this->cleanup();
+    // Drop any staged TX bytes: the UART now belongs to the probe/flasher, and stale
+    // client bytes must not be injected into the radio after resume.
+    this->tx_pending_len_ = this->tx_pending_pos_ = 0;
+    this->high_freq_.stop();
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
+    // Pauses last minutes during radio flashing; skip loop() entirely until resumed.
+    // Never touch loop state before setup: disable_loop()/enable_loop() force the
+    // component state machine to LOOP_DONE/LOOP, which SKIPS setup() if it hasn't run
+    // yet and then loops on a component with no socket (null deref in accept()).
+    // The manifests' on_boot pause/resume automations run at priority 200 ==
+    // AFTER_WIFI, i.e. potentially before our setup(), so this guard is load-bearing.
+    if (this->setup_complete_)
+        this->disable_loop();
+#endif
 }
 
 void StreamServerComponent::resume() {
@@ -288,4 +458,9 @@ void StreamServerComponent::resume() {
         return;
     ESP_LOGI(TAG, "Resuming stream server");
     this->paused_ = false;
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 1, 0)
+    // See pause(): forcing LOOP state before setup() has run would skip setup.
+    if (this->setup_complete_)
+        this->enable_loop();
+#endif
 }

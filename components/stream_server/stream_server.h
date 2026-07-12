@@ -2,6 +2,7 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/automation.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/socket/socket.h"
 #include "esphome/components/uart/uart.h"
 
@@ -83,6 +84,19 @@ protected:
 
     bool paused_{false};
     bool trace_{false};
+    bool setup_complete_{false};
+
+    // TCP -> UART staging for the non-blocking IDF FIFO write path; sized to the
+    // hardware TX FIFO. Unused (but harmless) on other platforms.
+    uint8_t tx_pending_[128];
+    size_t tx_pending_len_{0};
+    size_t tx_pending_pos_{0};
+    uint32_t tx_stall_since_{0};
+    int uart_num_{-1};
+    // Runs the main loop continuously while a TX backlog exists, so sustained
+    // host->radio bursts (e.g. OTA at 921600) drain at line rate instead of one
+    // FIFO fill per 16ms loop pass.
+    esphome::HighFrequencyLoopRequester high_freq_;
 
     int keep_alive_idle_s_{0};
     int keep_alive_interval_s_{0};
