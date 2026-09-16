@@ -3,7 +3,6 @@ import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.components import uart
 from esphome.const import CONF_ID, CONF_PORT, CONF_BUFFER_SIZE
-from esphome.util import parse_esphome_version
 
 # ESPHome doesn't know the Stream abstraction yet, so hardcode to use a UART for now.
 
@@ -30,7 +29,8 @@ def validate_buffer_size(buffer_size):
 
 
 CONFIG_SCHEMA = cv.All(
-    cv.require_esphome_version(2022, 3, 0),
+    # register_action(synchronous=...) below requires ESPHome 2026.3.0.
+    cv.require_esphome_version(2026, 3, 0),
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(StreamServerComponent),
@@ -70,10 +70,9 @@ async def to_code(config):
     await cg.register_component(var, config)
     await uart.register_uart_device(var, config)
 
-    # Request UART to wake the main loop when data arrives for low-latency processing
-    # Apply the fix only for versions 2025.12.x through 2026.2.x
-    if (2025, 12, 0) <= parse_esphome_version() < (2026, 3, 0):
-        uart.request_wake_loop_on_rx()
+    # Nothing to do for wake-on-RX: ESPHome 2026.3.0+ enables
+    # USE_UART_WAKE_LOOP_ON_RX by default on ESP32 builds with networking.
+
 
 @automation.register_action(
     "stream_server.pause",
