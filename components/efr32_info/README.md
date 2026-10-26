@@ -15,8 +15,11 @@ the ASH/EZSP sequence, then resumes normal traffic.
 * Runs the full ASH handshake (RST → RSTACK) and v4/v8 `getVersion` exchange.
 * Collects EZSP state: IEEE address, stack version, firmware version, EZSP
   protocol version, library status, security/network status (when available).
-* Reads manufacturing tokens such as `MFG_BOARD_NAME` and `MFG_STRING` – used by
-  `efr32_flasher` to pick the correct firmware variant automatically.
+* Reads firmware identity from Nabu Casa XNCP overrides when advertised, with
+  per-field fallback to `MFG_STRING` / `MFG_BOARD_NAME` for older firmware.
+  Blank/erased tokens are reported as unavailable rather than `FFFF...`.
+* Reads full firmware/build information through `getValue(VERSION_INFO)`,
+  including the Nabu Casa special version digit (for example `9.1.2.1`).
 * Non-blocking probe loop – heavy work runs from `loop()` and feeds the ESP32
   watchdog.
 * Optional raw ASH logging (`raw_capture: true`) for debugging.
@@ -118,3 +121,37 @@ The ASH helpers are shared with `efr32_flasher` via `ash_util.h`. If you modify
 them, keep both components in sync. The component avoids `external_components`
 dependencies beyond standard ESPHome modules; it’s safe to publish from a GitHub
 repo for reuse.
+
+## Identity/version compatibility
+
+The ASH reset, bootstrap, ACK handling, protocol negotiation, stream-server
+pause/resume, and existing network/security queries are unchanged. After
+negotiation, a read-only custom-frame feature query checks for the manufacturing
+identity override bit. Only a successful, correctly framed response enables
+XNCP identity reads. Each unavailable/empty override falls back independently to
+its physical manufacturing token; firmware without XNCP therefore still works.
+
+`getMfgToken` returns a length-prefixed byte string without a status byte.
+Empty, erased, whitespace-only, non-ASCII, and truncated responses do not count
+as identity. Both manufacturer and board must be present for `tokens=ok`.
+Missing fields are cleared so a previous module's identity cannot remain shown.
+
+The full version query is EZSP `0x00AA` with value ID `0x11`. Its payload starts
+with a little-endian build number, then major/minor/patch/special; the optional
+version-type byte is ignored. Status decoding handles one-byte statuses before
+EZSP 14 and four-byte statuses in EZSP 14+. If full version info is unavailable,
+the existing VERSION(min) result remains as a fallback. Identity/value replies
+are decoded only for the matching request because they do not echo the selector.
+
+### Local verification
+
+```sh
+c++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I. \
+  tests/test_efr32_info_protocol.cpp -o /tmp/test-efr32-info-protocol
+/tmp/test-efr32-info-protocol
+uvx --from esphome==2026.10.0 esphome compile tests/efr32_info_compile.yaml
+```
+
+These check captured/constructed EZSP replies and compile the ESP32 component.
+They do not replace testing a probe against physical NCP firmware. The YAML is
+a compile-only fixture with placeholder Wi-Fi settings, not a deployment image.

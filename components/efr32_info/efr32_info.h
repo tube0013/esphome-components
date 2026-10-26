@@ -68,6 +68,7 @@ class EFR32InfoComponent : public Component {
   void seed_initial_window_(uint8_t delivered_seq);
   void parse_unsolicited_ezsp_(const std::vector<uint8_t> &ezsp);
   void ack_re_sync_();
+  bool parse_version_info_reply_(const std::vector<uint8_t> &resp);
   bool parse_token_reply_(const std::vector<uint8_t> &resp, std::string &out);
   bool parse_v8_version_reply_(const std::vector<uint8_t> &resp);
 
