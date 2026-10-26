@@ -1,0 +1,43 @@
+# Compile-only fixture; does not connect to or flash a device.
+esphome:
+  name: efr32-info-compile
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+logger:
+  baud_rate: 0
+wifi:
+  ssid: compile-test-only
+  password: compile-test-only
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [efr32_info, stream_server]
+uart:
+  id: radio_uart
+  tx_pin: GPIO4
+  rx_pin: GPIO36
+  baud_rate: 460800
+stream_server:
+  id: radio_stream
+  uart_id: radio_uart
+efr32_info:
+  id: radio_info
+  uart_id: radio_uart
+  stream_server_id: radio_stream
+  manufacturer_text: manufacturer_name
+  board_name_text: board_name
+  firmware_text: firmware_version
+  busy_binary_sensor: probe_busy
+text_sensor:
+  - platform: template
+    id: manufacturer_name
+  - platform: template
+    id: board_name
+  - platform: template
+    id: firmware_version
+binary_sensor:
+  - platform: template
+    id: probe_busy

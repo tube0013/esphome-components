@@ -1,4 +1,5 @@
 #include "esphome/components/efr32_info/efr32_info.h"
+#include "ezsp_info.h"
 
 #include "esphome/components/efr32_info/ash_util.h"
 #include "esphome/core/application.h"
@@ -384,53 +385,8 @@ void EFR32InfoComponent::parse_unsolicited_ezsp_(const std::vector<uint8_t> &ezs
   const uint8_t status = ezsp.size() > 5 ? ezsp[5] : 0xFF;
 
   switch (frame_id) {
-    case 0x0002: {  // getVersion
-      if (status != 0x00 || ezsp.size() < 11)
-        break;
-      uint8_t major = ezsp[6];
-      uint8_t minor = ezsp[7];
-      uint8_t patch = ezsp[8];
-      uint8_t special = ezsp[9];
-      uint32_t build = static_cast<uint32_t>(ezsp[10]);
-      if (ezsp.size() >= 12)
-        build |= static_cast<uint32_t>(ezsp[11]) << 8;
-      char buf[64];
-      std::snprintf(buf, sizeof(buf), "%u.%u.%u.%u build %u",
-                    static_cast<unsigned>(major), static_cast<unsigned>(minor),
-                    static_cast<unsigned>(patch), static_cast<unsigned>(special),
-                    static_cast<unsigned>(build));
-      last_stack_version_ = buf;
-      publish_text_(stack_version_sensor_, last_stack_version_);
-      char fw_only[32];
-      std::snprintf(fw_only, sizeof(fw_only), "%u.%u.%u.%u",
-                    static_cast<unsigned>(major), static_cast<unsigned>(minor),
-                    static_cast<unsigned>(patch), static_cast<unsigned>(special));
-      last_firmware_ = fw_only;
-      publish_text_(firmware_sensor_, last_firmware_);
-      break;
-    }
-    case 0x000B: {  // getMfgToken
-      if (status != 0x00 || ezsp.size() < 7)
-        break;
-      uint8_t length = ezsp[6];
-      size_t start = 7;
-      if (ezsp.size() < start + length)
-        length = static_cast<uint8_t>(ezsp.size() > start ? ezsp.size() - start : 0);
-      if (length == 0)
-        break;
-      std::vector<uint8_t> data(ezsp.begin() + start, ezsp.begin() + start + length);
-      std::string text = extract_ascii_(data);
-      if (text.empty())
-        break;
-      if (last_manufacturer_.empty()) {
-        last_manufacturer_ = text;
-        publish_text_(manufacturer_sensor_, last_manufacturer_);
-      } else if (last_board_name_.empty() && text != last_manufacturer_) {
-        last_board_name_ = text;
-        publish_text_(board_name_sensor_, last_board_name_);
-      }
-      break;
-    }
+    // Identity/value replies carry no request selector. Only the matching probe request
+    // may assign identity fields; guessing here can swap manufacturer/model.
     case 0x0026: {  // getEui64
       if (status != 0x00 || ezsp.size() < 14)
         break;
@@ -476,33 +432,21 @@ void EFR32InfoComponent::parse_unsolicited_ezsp_(const std::vector<uint8_t> &ezs
 }
 
 bool EFR32InfoComponent::parse_token_reply_(const std::vector<uint8_t> &resp, std::string &out) {
-  if (resp.size() < 6)
-    return false;
+  return protocol::token(resp, out);
+}
 
-  size_t pos = 5;
-  uint8_t status = 0x00;
-  if (pos < resp.size() && (resp[pos] == 0x00 || resp[pos] == 0x0D)) {
-    status = resp[pos++];
-  }
-  if (status != 0x00) {
-    ESP_LOGW(TAG, "Token reply status=0x%02X resp=%s", static_cast<unsigned>(status),
-             bytes_to_hex_(resp, 24).c_str());
+bool EFR32InfoComponent::parse_version_info_reply_(const std::vector<uint8_t> &resp) {
+  protocol::Version version{};
+  if (!protocol::version_info(resp, ezsp_protocol_version_, version))
     return false;
-  }
-  if (pos >= resp.size())
-    return false;
-
-  uint8_t length = resp[pos++];
-  if (pos + length > resp.size())
-    length = static_cast<uint8_t>(resp.size() - pos);
-  if (length == 0)
-    return false;
-
-  std::vector<uint8_t> data(resp.begin() + pos, resp.begin() + pos + length);
-  std::string text = extract_ascii_(data);
-  if (text.empty())
-    text = bytes_to_hex_(data, 32);
-  out = text;
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "%u.%u.%u.%u build %u", version.major, version.minor,
+                version.patch, version.special, version.build);
+  last_stack_version_ = buf;
+  publish_text_(stack_version_sensor_, last_stack_version_);
+  std::snprintf(buf, sizeof(buf), "%u.%u.%u.%u", version.major, version.minor, version.patch, version.special);
+  last_firmware_ = buf;
+  publish_text_(firmware_sensor_, last_firmware_);
   return true;
 }
 
@@ -1219,26 +1163,42 @@ void EFR32InfoComponent::run_probe_() {
     send_expect_seq(0x0147, {0x00, 0x03, 0x00, 0x00, 0x00}, 900, resp);
   }
 
+  // Only query identity overrides after a well-formed Nabu Casa feature reply.
+  bool xncp_identity = false;
+  {
+    std::vector<uint8_t> resp;
+    if (send_expect_seq(protocol::CUSTOM_FRAME, {3, 0x00, 0x00, 0x00}, 1000, resp))
+      xncp_identity = protocol::identity_feature(resp, ezsp_protocol_version_);
+  }
+
   auto handle_token = [&](uint8_t token_id, std::string &target, esphome::text_sensor::TextSensor *sensor) -> bool {
     std::vector<uint8_t> resp;
-    if (!send_expect_seq(0x000B, {token_id}, 1000, resp)) {
-      ESP_LOGW(TAG, "Token 0x%02X request timed out", static_cast<unsigned>(token_id));
-      return false;
+    std::string value;
+    bool have_identity = false;
+    const char *source = "manufacturing token";
+    if (xncp_identity &&
+        send_expect_seq(protocol::CUSTOM_FRAME, {4, 0x02, 0x00, 0x00, token_id}, 1000, resp)) {
+      std::vector<uint8_t> override_value;
+      have_identity = protocol::custom(resp, ezsp_protocol_version_, 0x0002, override_value) &&
+                      protocol::identity_text(override_value, value);
+      if (have_identity)
+        source = "XNCP override";
     }
-    if (!parse_token_reply_(resp, target)) {
-      ESP_LOGW(TAG, "Token 0x%02X parse failed resp=%s", static_cast<unsigned>(token_id),
-               bytes_to_hex_(resp, 48).c_str());
-      return false;
-    }
+    if (!have_identity && send_expect_seq(protocol::GET_MFG_TOKEN, {token_id}, 1000, resp))
+      have_identity = parse_token_reply_(resp, value);
+    // Clear previous probe results when this device has no usable identity.
+    target = have_identity ? value : "";
     publish_text_(sensor, target);
-    ESP_LOGI(TAG, "Token 0x%02X value '%s'", static_cast<unsigned>(token_id), target.c_str());
-    return true;
+    if (have_identity)
+      ESP_LOGI(TAG, "Identity 0x%02X from %s: '%s'", static_cast<unsigned>(token_id), source, target.c_str());
+    else
+      ESP_LOGW(TAG, "Identity 0x%02X unavailable (blank, unsupported, or invalid reply)", static_cast<unsigned>(token_id));
+    return have_identity;
   };
 
-  if (handle_token(0x01, last_manufacturer_, manufacturer_sensor_))
-    tokens_ok = true;
-  if (handle_token(0x02, last_board_name_, board_name_sensor_))
-    tokens_ok = true;
+  const bool manufacturer_ok = handle_token(0x01, last_manufacturer_, manufacturer_sensor_);
+  const bool board_ok = handle_token(0x02, last_board_name_, board_name_sensor_);
+  tokens_ok = manufacturer_ok && board_ok;
 
   {
     std::vector<uint8_t> resp;
@@ -1268,28 +1228,11 @@ void EFR32InfoComponent::run_probe_() {
 
   {
     std::vector<uint8_t> resp;
-    if (send_expect_seq(0x0002, {0x40}, 800, resp) && resp.size() >= 11 && resp[5] == 0x00) {
-      uint8_t major = resp[6];
-      uint8_t minor = resp[7];
-      uint8_t patch = resp[8];
-      uint8_t special = resp[9];
-      uint32_t build = static_cast<uint32_t>(resp[10]);
-      if (resp.size() >= 12)
-        build |= static_cast<uint32_t>(resp[11]) << 8;
-      char buf[64];
-    std::snprintf(buf, sizeof(buf), "%u.%u.%u.%u build %u",
-                  static_cast<unsigned>(major), static_cast<unsigned>(minor),
-                  static_cast<unsigned>(patch), static_cast<unsigned>(special),
-                  static_cast<unsigned>(build));
-    last_stack_version_ = buf;
-    publish_text_(stack_version_sensor_, last_stack_version_);
-    char fw_only[32];
-    std::snprintf(fw_only, sizeof(fw_only), "%u.%u.%u.%u",
-                  static_cast<unsigned>(major), static_cast<unsigned>(minor),
-                  static_cast<unsigned>(patch), static_cast<unsigned>(special));
-    last_firmware_ = fw_only;
-    publish_text_(firmware_sensor_, last_firmware_);
-      ok_version = true;
+    if (send_expect_seq(protocol::GET_VALUE, {protocol::VERSION_INFO}, 800, resp)) {
+      if (parse_version_info_reply_(resp))
+        ok_version = true;
+      else
+        ESP_LOGW(TAG, "Version info unavailable; keeping VERSION(min) result");
     }
   }
 
