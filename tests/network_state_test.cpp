@@ -56,34 +56,34 @@ int main(int argc, char **argv) {
   assert(first.boot(0, save));
   assert(!first.testing && !first.active.is_static && writes == 0);
   assert(!first.stage(config, fail));
-  assert(first.saved.phase == Phase::CONFIRMED && !flash.confirmed.is_static);
+  assert(first.saved.phase == Phase::PHASE_CONFIRMED && !flash.confirmed.is_static);
   assert(first.stage(config, save));
-  assert(!first.active.is_static && flash.phase == Phase::STAGED);
+  assert(!first.active.is_static && flash.phase == Phase::PHASE_STAGED);
   assert(!first.stage(config, save));
 
   TrialState trial;
   trial.saved = flash;
   assert(trial.boot(5000, save));
-  assert(trial.testing && trial.active.ip == config.ip && flash.phase == Phase::TESTING);
+  assert(trial.testing && trial.active.ip == config.ip && flash.phase == Phase::PHASE_TESTING);
   assert(!trial.stage({}, save));
   assert(trial.remaining_seconds(5000) == 120);
   assert(!trial.expired(124999) && trial.expired(125000));
   assert(!trial.finish(true, 125000, save));  // Late confirmation never wins.
   assert(trial.testing && trial.remaining_seconds(125000) == 0);
   assert(!trial.finish(false, 125000, fail));
-  assert(trial.testing && flash.phase == Phase::TESTING);
+  assert(trial.testing && flash.phase == Phase::PHASE_TESTING);
 
   // Power loss at any point during an unconfirmed trial restores DHCP.
   TrialState interrupted;
   interrupted.saved = flash;
   assert(interrupted.boot(0, save));
-  assert(!interrupted.testing && !interrupted.active.is_static && flash.phase == Phase::CONFIRMED);
+  assert(!interrupted.testing && !interrupted.active.is_static && flash.phase == Phase::PHASE_CONFIRMED);
   assert(interrupted.stage(config, save));
   TrialState confirmed;
   confirmed.saved = flash;
   assert(confirmed.boot(100, save));
   assert(!confirmed.finish(true, 200, fail));
-  assert(confirmed.testing && flash.phase == Phase::TESTING);
+  assert(confirmed.testing && flash.phase == Phase::PHASE_TESTING);
   assert(confirmed.finish(true, 201, save));
   assert(!confirmed.testing && flash.confirmed.ip == config.ip);
   assert(!confirmed.finish(true, 202, save));

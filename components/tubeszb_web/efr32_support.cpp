@@ -8,157 +8,225 @@
 
 namespace esphome::tubeszb_web {
 
-std::string TubesZBWeb::radio_source_key_() const {
-  return std::string((zigbee_beta_ != nullptr && zigbee_beta_->state) ? "beta|" : "stable|") + custom_url_->state + "|" + board_sensor_->state;
+const std::string &TubesZBWeb::radio_source_key_() const { return this->radio_source_key_cache_; }
+
+void TubesZBWeb::refresh_radio_source_key_() {
+  // Inputs change only on sensor/channel/URL callbacks, never during idle sampling.
+  this->radio_source_key_cache_ =
+      std::string(this->radio_.zigbee_beta ? "beta|" : "stable|") + this->radio_.url + "|" + this->radio_.board;
 }
 
 void TubesZBWeb::setup_radio_() {
-  radio_flasher_->set_flash_listener([this](const zigbee_firmware_baud::FlashStatus &status) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    radio_.operation = "flash";
-    radio_.result = status.result; radio_.progress = status.progress;
-    radio_flash_active_ = status.result == 1;
-    radio_.busy = status.result == 1;
-    radio_command_at_ = millis();
-    radio_.status = status.result == 1 ? "Zigbee flash in progress" :
-                    status.result == 2 ? "Zigbee firmware flash complete" : "Zigbee firmware flash failed; open device logs";
+  this->radio_flasher_->set_flash_listener([this](const zigbee_firmware_baud::FlashStatus &status) {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->radio_.operation = "flash";
+    this->radio_.result = status.result;
+    this->radio_.progress = status.progress;
+    this->radio_flash_active_ = status.result == 1;
+    this->radio_.busy = status.result == 1;
+    this->radio_command_at_ = millis();
+    this->radio_.status = status.result == 1   ? "Zigbee flash in progress"
+                          : status.result == 2 ? "Zigbee firmware flash complete"
+                                               : "Zigbee firmware flash failed; open device logs";
   });
-  busy_->add_on_state_callback([this](bool busy) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    radio_.busy = busy;
+  this->busy_->add_on_state_callback([this](bool busy) {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->radio_.busy = busy;
   });
   // Sensor callbacks keep the HTTP snapshot current even while the existing
   // EFR32 flasher/probe owns the main loop for a long operation.
   auto bind = [this](text_sensor::TextSensor *sensor, std::string RadioState::*field) {
+    {
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      this->radio_.*field = sensor->state;
+    }
     sensor->add_on_state_callback([this, field](const std::string &value) {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (field == &RadioState::board && radio_.board != value) {
-        radio_.checked = false; radio_checked_key_.clear();
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      const bool board_changed = field == &RadioState::board && this->radio_.board != value;
+      this->radio_.*field = value;
+      if (board_changed) {
+        this->radio_.checked = false;
+        this->radio_checked_key_.clear();
+        this->refresh_radio_source_key_();
       }
-      radio_.*field = value;
     });
   };
-  bind(firmware_sensor_, &RadioState::firmware);
-  bind(latest_sensor_, &RadioState::latest);
-  bind(board_sensor_, &RadioState::board);
-  bind(manufacturer_sensor_, &RadioState::manufacturer);
-  bind(ieee_sensor_, &RadioState::ieee);
-  bind(status_sensor_, &RadioState::status);
-  if (zigbee_beta_ != nullptr) zigbee_beta_->add_on_state_callback([this](bool) {
-    std::lock_guard<std::mutex> lock(mutex_); radio_.checked = false; radio_checked_key_.clear();
+  bind(this->firmware_sensor_, &RadioState::firmware);
+  bind(this->latest_sensor_, &RadioState::latest);
+  bind(this->board_sensor_, &RadioState::board);
+  bind(this->manufacturer_sensor_, &RadioState::manufacturer);
+  bind(this->ieee_sensor_, &RadioState::ieee);
+  bind(this->status_sensor_, &RadioState::status);
+  if (this->zigbee_beta_ != nullptr)
+    this->zigbee_beta_->add_on_state_callback([this](bool value) {
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      if (this->radio_.zigbee_beta != value) {
+        this->radio_.zigbee_beta = value;
+        this->radio_.checked = false;
+        this->radio_checked_key_.clear();
+        this->refresh_radio_source_key_();
+      }
+    });
+  this->custom_url_->add_on_state_callback([this](const std::string &value) {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (this->radio_.url != value) {
+      this->radio_.url = value;
+      this->radio_.checked = false;
+      this->radio_checked_key_.clear();
+      this->refresh_radio_source_key_();
+    }
   });
-  custom_url_->add_on_state_callback([this](const std::string &) {
-    std::lock_guard<std::mutex> lock(mutex_); radio_.checked = false; radio_checked_key_.clear();
+  this->baud_->add_on_state_callback([this](const std::string &value, size_t) {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->radio_.selected_baud = value;
   });
-  gateway_beta_->add_on_state_callback([this](bool) {
-    std::lock_guard<std::mutex> lock(mutex_); verified_source_.clear(); snapshot_.update_verified = false;
+  this->gateway_beta_->add_on_state_callback([this](bool value) {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->radio_.gateway_beta = value;
+    this->verified_source_.clear();
+    this->snapshot_.update_verified = false;
   });
-  if (logger::global_logger != nullptr) {
-    logger::global_logger->add_log_callback(this,
-      [](void *self, uint8_t level, const char *tag, const char *message, size_t length) {
-        static_cast<TubesZBWeb *>(self)->radio_log_(level, tag, message, length);
-      });
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->radio_.gateway_beta = this->gateway_beta_->state;
+    this->radio_.zigbee_beta = this->zigbee_beta_ != nullptr && this->zigbee_beta_->state;
+    this->radio_baud_rate_ = this->uart_->get_baud_rate();
+    this->radio_.url = this->custom_url_->state;
+    this->radio_.selected_baud = this->baud_->current_option();
+    this->refresh_radio_source_key_();
   }
-
+  if (logger::global_logger != nullptr) {
+    logger::global_logger->add_log_callback(
+        this, [](void *self, uint8_t level, const char *tag, const char *message, size_t length) {
+          static_cast<TubesZBWeb *>(self)->radio_log_(level, tag, message, length);
+        });
+  }
 }
 
 void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *message, size_t length) {
   if (strcmp(tag, "efr32_flasher") != 0)
     return;
   const std::string line(message, std::min(length, size_t(512)));
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (radio_.operation != "flash" && level <= ESPHOME_LOG_LEVEL_ERROR && radio_.result == 1)
-    radio_.result = 3;
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  if (this->radio_.operation != "flash" && level <= ESPHOME_LOG_LEVEL_ERROR && this->radio_.result == 1)
+    this->radio_.result = 3;
 }
 
 void TubesZBWeb::run_radio_command_(Command command, const std::string &value) {
-  if ((command == Command::RADIO_CHECK || command == Command::RADIO_FLASH) && !settings_->internet_allowed()) return;
+  if ((command == Command::COMMAND_RADIO_CHECK || command == Command::COMMAND_RADIO_FLASH) &&
+      !this->settings_->internet_allowed())
+    return;
   {
-    std::lock_guard<std::mutex> lock(mutex_);
-    radio_.result = 1; radio_.progress = -1;
-    radio_command_at_ = millis();
-    radio_.operation = command == Command::RADIO_FLASH ? "flash" : command == Command::RADIO_CHECK ? "check" :
-                       command == Command::RADIO_PROBE ? "probe" : command == Command::RADIO_BOOTLOADER ? "bootloader" : "settings";
-    if (command == Command::RADIO_CHECK) { radio_.checked = false; radio_checked_key_.clear(); }
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    this->radio_.result = 1;
+    this->radio_.progress = -1;
+    this->radio_command_at_ = millis();
+    this->radio_.operation = command == Command::COMMAND_RADIO_FLASH        ? "flash"
+                             : command == Command::COMMAND_RADIO_CHECK      ? "check"
+                             : command == Command::COMMAND_RADIO_PROBE      ? "probe"
+                             : command == Command::COMMAND_RADIO_BOOTLOADER ? "bootloader"
+                                                                            : "settings";
+    if (command == Command::COMMAND_RADIO_CHECK) {
+      this->radio_.checked = false;
+      this->radio_checked_key_.clear();
+      this->radio_requested_key_ = this->radio_source_key_();
+    }
   }
   switch (command) {
-    case Command::RADIO_CHECK: radio_requested_key_ = radio_source_key_(); check_button_->press(); break;
-    case Command::RADIO_FLASH: flash_button_->press(); break;
-    case Command::RADIO_PROBE: probe_button_->press(); break;
-    case Command::RADIO_RESET: reset_button_->press(); break;
-    case Command::RADIO_BOOTLOADER: bootloader_button_->press(); break;
-    case Command::SERIAL_PAUSE: pause_button_->press(); break;
-    case Command::SERIAL_RESUME: resume_button_->press(); break;
-    case Command::SET_BAUD: baud_->make_call().set_option(value).perform(); break;
-    case Command::SET_URL:
-      radio_checked_key_.clear();
-      custom_url_->make_call().set_value(value).perform(); break;
-    case Command::GATEWAY_CHANNEL:
-      verified_source_.clear();
-      gateway_beta_->control(value == "beta");
-      ESP_LOGI("tubeszb_web", "Gateway firmware channel: %s. Check for updates before installing.", value.c_str()); break;
-    case Command::ZIGBEE_CHANNEL:
-      radio_checked_key_.clear();
-      zigbee_beta_->control(value == "beta");
-      ESP_LOGI("tubeszb_web", "Zigbee firmware channel: %s. Check Zigbee firmware before flashing.", value.c_str()); break;
-    default: break;
+    case Command::COMMAND_RADIO_CHECK:
+      this->check_button_->press();
+      break;
+    case Command::COMMAND_RADIO_FLASH:
+      this->flash_button_->press();
+      break;
+    case Command::COMMAND_RADIO_PROBE:
+      this->probe_button_->press();
+      break;
+    case Command::COMMAND_RADIO_RESET:
+      this->reset_button_->press();
+      break;
+    case Command::COMMAND_RADIO_BOOTLOADER:
+      this->bootloader_button_->press();
+      break;
+    case Command::COMMAND_SERIAL_PAUSE:
+      this->pause_button_->press();
+      break;
+    case Command::COMMAND_SERIAL_RESUME:
+      this->resume_button_->press();
+      break;
+    case Command::COMMAND_SET_BAUD:
+      this->baud_->make_call().set_option(value).perform();
+      break;
+    case Command::COMMAND_SET_URL:
+      this->radio_checked_key_.clear();
+      this->custom_url_->make_call().set_value(value).perform();
+      break;
+    case Command::COMMAND_GATEWAY_CHANNEL:
+      this->verified_source_.clear();
+      this->gateway_beta_->control(value == "beta");
+      ESP_LOGI("tubeszb_web", "Gateway firmware channel: %s. Check for updates before installing.", value.c_str());
+      break;
+    case Command::COMMAND_ZIGBEE_CHANNEL:
+      this->radio_checked_key_.clear();
+      this->zigbee_beta_->control(value == "beta");
+      ESP_LOGI("tubeszb_web", "Zigbee firmware channel: %s. Check Zigbee firmware before flashing.", value.c_str());
+      break;
+    default:
+      break;
   }
 }
 
 void TubesZBWeb::sample_radio_() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  const bool manual_bootloader = bootloader_script_->is_running();
-  radio_.busy = busy_->state || manual_bootloader;
+  const uint32_t now = App.get_loop_component_start_time();
+  std::lock_guard<std::mutex> lock(this->mutex_);
+  const bool manual_bootloader = this->bootloader_script_->is_running();
+  this->radio_.busy = this->busy_->state || manual_bootloader;
   // Also reflect presses from the original ESPHome interface using this script.
-  if (manual_bootloader && radio_.operation != "bootloader") {
-    radio_.operation = "bootloader"; radio_.result = 1; radio_.progress = -1;
-    radio_command_at_ = millis();
+  if (manual_bootloader && this->radio_.operation != "bootloader") {
+    this->radio_.operation = "bootloader";
+    this->radio_.result = 1;
+    this->radio_.progress = -1;
+    this->radio_command_at_ = now;
   }
-  radio_.connected = stream_->is_connected();
-  radio_.paused = stream_->is_paused();
-  radio_.firmware = firmware_sensor_->state;
-  radio_.latest = latest_sensor_->state;
-  radio_.board = board_sensor_->state;
-  radio_.manufacturer = manufacturer_sensor_->state;
-  radio_.ieee = ieee_sensor_->state;
-  radio_.status = status_sensor_->state;
-  radio_.url = custom_url_->state;
-  radio_.selected_baud = baud_->current_option().c_str();
-  radio_.gateway_beta = gateway_beta_->state;
-  radio_.zigbee_beta = zigbee_beta_ != nullptr && zigbee_beta_->state;
-  if (radio_.result == 1 && !radio_.busy && radio_.operation != "flash" && uint32_t(millis()-radio_command_at_) > 1000) {
-    radio_.result = 2;
-    if (radio_.operation == "check" && radio_requested_key_ == radio_source_key_()) radio_checked_key_ = radio_requested_key_;
+  this->radio_.connected = this->stream_->is_connected();
+  this->radio_.paused = this->stream_->is_paused();
+  if (this->radio_.result == 1 && !this->radio_.busy && this->radio_.operation != "flash" &&
+      int32_t(now - this->radio_command_at_) > 1000) {
+    this->radio_.result = 2;
+    if (this->radio_.operation == "check" && this->radio_requested_key_ == this->radio_source_key_())
+      this->radio_checked_key_ = this->radio_requested_key_;
   }
-  if (radio_.result == 1 && !radio_.busy && radio_.operation == "flash" && uint32_t(millis()-radio_command_at_) >= 35000) {
-    radio_.result = 3;
-    radio_.status = "Zigbee flash did not start; open device logs and try again";
+  if (this->radio_.result == 1 && !this->radio_.busy && this->radio_.operation == "flash" &&
+      int32_t(now - this->radio_command_at_) >= 35000) {
+    this->radio_.result = 3;
+    this->radio_.status = "Zigbee flash did not start; open device logs and try again";
   }
-  radio_.checked = !radio_checked_key_.empty() && radio_checked_key_ == radio_source_key_();
+  this->radio_.checked = !this->radio_checked_key_.empty() && this->radio_checked_key_ == this->radio_source_key_();
 }
 
 void TubesZBWeb::radio_json_(JsonObject root) {
   auto data = root["zigbee"].to<JsonObject>();
-  data["busy"] = radio_.busy;
-  data["connected"] = radio_.connected;
-  data["paused"] = radio_.paused;
-  data["firmware"] = radio_.firmware;
-  data["latest"] = radio_.latest;
-  data["board_name"] = radio_.board;
-  data["manufacturer"] = radio_.manufacturer;
-  data["ieee"] = radio_.ieee;
-  data["info_status"] = radio_.status;
-  data["custom_url"] = radio_.url;
-  data["baud"] = radio_.selected_baud;
+  data["busy"] = this->radio_.busy;
+  data["connected"] = this->radio_.connected;
+  data["paused"] = this->radio_.paused;
+  data["firmware"] = this->radio_.firmware;
+  data["latest"] = this->radio_.latest;
+  data["board_name"] = this->radio_.board;
+  data["manufacturer"] = this->radio_.manufacturer;
+  data["ieee"] = this->radio_.ieee;
+  data["info_status"] = this->radio_.status;
+  data["custom_url"] = this->radio_.url;
+  data["baud"] = this->radio_.selected_baud;
   auto options = data["baud_options"].to<JsonArray>();
-  for (const char *option : baud_->traits.get_options()) options.add(option);
-  data["gateway_beta"] = radio_.gateway_beta;
-  data["zigbee_beta"] = radio_.zigbee_beta;
-  data["supports_zigbee_beta"] = zigbee_beta_ != nullptr;
-  data["checked"] = radio_.checked;
-  data["operation"] = radio_.operation;
-  data["result"] = radio_.result;
-  data["progress"] = radio_.progress;
+  for (const char *option : this->baud_->traits.get_options())
+    options.add(option);
+  data["gateway_beta"] = this->radio_.gateway_beta;
+  data["zigbee_beta"] = this->radio_.zigbee_beta;
+  data["supports_zigbee_beta"] = this->zigbee_beta_ != nullptr;
+  data["checked"] = this->radio_.checked;
+  data["operation"] = this->radio_.operation;
+  data["result"] = this->radio_.result;
+  data["progress"] = this->radio_.progress;
   data["port"] = 6638;
 }
 

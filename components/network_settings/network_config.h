@@ -69,8 +69,8 @@ inline const char *validate_config(const NetworkConfig &config) {
   if (host == 0 || host == hosts)
     return "IP address cannot be the subnet's network or broadcast address.";
   if (!unicast_ipv4(config.gateway) || config.gateway == config.ip ||
-      (config.gateway & config.subnet) != (config.ip & config.subnet) ||
-      (config.gateway & hosts) == 0 || (config.gateway & hosts) == hosts)
+      (config.gateway & config.subnet) != (config.ip & config.subnet) || (config.gateway & hosts) == 0 ||
+      (config.gateway & hosts) == hosts)
     return "Gateway must be a different usable host in the same subnet.";
   if (!unicast_ipv4(config.dns1))
     return "Primary DNS must be a usable IPv4 address.";

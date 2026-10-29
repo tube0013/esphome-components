@@ -9,6 +9,7 @@
 #include "esphome/components/web_server/web_server.h"
 #include "esphome/components/ota/ota_backend.h"
 #include <mutex>
+#include <type_traits>
 #ifdef USE_TUBESZB_ZIGBEE
 #include "esphome/components/script/script.h"
 #endif
@@ -37,19 +38,18 @@ extern const size_t FRONTEND_GZ_SIZE;
 
 class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlobalStateListener {
  public:
-  void set_base(web_server_base::WebServerBase *base) { base_ = base; }
-  void set_web_server(web_server::WebServer *server) { server_ = server; }
-  void set_network_settings(network_settings::NetworkSettings *settings) { settings_ = settings; }
-  void set_ethernet(ethernet::EthernetComponent *ethernet) { ethernet_ = ethernet; }
-  void set_zwave_uart(uart::UARTComponent *uart) { zwave_uart_ = uart; }
-  void set_uart(uart::UARTComponent *uart) { uart_ = uart; }
-  void set_update(http_request::HttpRequestUpdate *update) { update_ = update; }
-  void set_model(const char *model) { model_ = model; }
-  void set_board(const char *board) { board_ = board; }
+  TubesZBWeb(web_server_base::WebServerBase *base, web_server::WebServer *server,
+             network_settings::NetworkSettings *settings, ethernet::EthernetComponent *ethernet,
+             uart::UARTComponent *uart, http_request::HttpRequestUpdate *update)
+      : base_(base), server_(server), settings_(settings), ethernet_(ethernet), uart_(uart), update_(update) {}
+  void set_zwave_uart(uart::UARTComponent *uart) { this->zwave_uart_ = uart; }
+  void set_model(const char *model) { this->model_ = model; }
+  void set_board(const char *board) { this->board_ = board; }
 #ifdef USE_TUBESZB_ZIGBEE
-  void set_stream_server_id(::StreamServerComponent *server) { stream_ = server; }
-  void set_busy_sensor(binary_sensor::BinarySensor *sensor) { busy_ = sensor; }
-#define TZB_TEXT_BINDING(name) void set_##name##_sensor(text_sensor::TextSensor *sensor) { name##_sensor_ = sensor; }
+  void set_stream_server_id(::StreamServerComponent *server) { this->stream_ = server; }
+  void set_busy_sensor(binary_sensor::BinarySensor *sensor) { this->busy_ = sensor; }
+#define TZB_TEXT_BINDING(name) \
+  void set_##name##_sensor(text_sensor::TextSensor *sensor) { this->name##_sensor_ = sensor; }
   TZB_TEXT_BINDING(firmware)
   TZB_TEXT_BINDING(latest)
   TZB_TEXT_BINDING(board)
@@ -57,7 +57,8 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   TZB_TEXT_BINDING(ieee)
   TZB_TEXT_BINDING(status)
 #undef TZB_TEXT_BINDING
-#define TZB_BUTTON_BINDING(name) void set_##name##_button(button::Button *value) { name##_button_ = value; }
+#define TZB_BUTTON_BINDING(name) \
+  void set_##name##_button(button::Button *value) { this->name##_button_ = value; }
   TZB_BUTTON_BINDING(check)
   TZB_BUTTON_BINDING(flash)
   TZB_BUTTON_BINDING(probe)
@@ -67,20 +68,20 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   TZB_BUTTON_BINDING(bootloader)
 #undef TZB_BUTTON_BINDING
 #ifdef USE_TUBESZB_CC2652
-  void set_radio_flasher(cc2652_flasher::CC2652Flasher *value) { radio_flasher_ = value; }
-  void set_flash_script(script::Script<> *value) { cc_flash_script_ = value; }
-  void set_boot_probe_script(script::Script<> *value) { cc_boot_probe_script_ = value; }
+  void set_radio_flasher(cc2652_flasher::CC2652Flasher *value) { this->radio_flasher_ = value; }
+  void set_flash_script(script::Script<> *value) { this->cc_flash_script_ = value; }
+  void set_boot_probe_script(script::Script<> *value) { this->cc_boot_probe_script_ = value; }
 #endif
 #if defined(USE_TUBESZB_EFR32) || defined(USE_TUBESZB_SERIAL_RADIO)
-  void set_baud_select(select::Select *value) { baud_ = value; }
+  void set_baud_select(select::Select *value) { this->baud_ = value; }
 #endif
-  void set_radio_model(const char *model) { radio_model_ = model; }
-  void set_gateway_beta_switch(switch_::Switch *value) { gateway_beta_ = value; }
-  void set_zigbee_beta_switch(switch_::Switch *value) { zigbee_beta_ = value; }
+  void set_radio_model(const char *model) { this->radio_model_ = model; }
+  void set_gateway_beta_switch(switch_::Switch *value) { this->gateway_beta_ = value; }
+  void set_zigbee_beta_switch(switch_::Switch *value) { this->zigbee_beta_ = value; }
 #ifdef USE_TUBESZB_EFR32
-  void set_radio_flasher(efr32_flasher::EFR32Flasher *value) { radio_flasher_ = value; }
-  void set_bootloader_script(script::Script<> *value) { bootloader_script_ = value; }
-  void set_custom_url_text(text::Text *value) { custom_url_ = value; }
+  void set_radio_flasher(efr32_flasher::EFR32Flasher *value) { this->radio_flasher_ = value; }
+  void set_bootloader_script(script::Script<> *value) { this->bootloader_script_ = value; }
+  void set_custom_url_text(text::Text *value) { this->custom_url_ = value; }
 #endif
 #endif
   // Register the index handler before WebServer::setup() at priority 249.
@@ -96,14 +97,30 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   void handleRequest(AsyncWebServerRequest *request) override;
 
  protected:
-  enum class Command { NONE, RESTART, CHECK, INSTALL, RADIO_CHECK, RADIO_FLASH, RADIO_PROBE, RADIO_RESET,
-                       SERIAL_PAUSE, SERIAL_RESUME, SET_BAUD, SET_URL, GATEWAY_CHANNEL, ZIGBEE_CHANNEL, RADIO_BOOTLOADER };
+  enum class Command {
+    COMMAND_NONE,
+    COMMAND_RESTART,
+    COMMAND_CHECK,
+    COMMAND_INSTALL,
+    COMMAND_RADIO_CHECK,
+    COMMAND_RADIO_FLASH,
+    COMMAND_RADIO_PROBE,
+    COMMAND_RADIO_RESET,
+    COMMAND_SERIAL_PAUSE,
+    COMMAND_SERIAL_RESUME,
+    COMMAND_SET_BAUD,
+    COMMAND_SET_URL,
+    COMMAND_GATEWAY_CHANNEL,
+    COMMAND_ZIGBEE_CHANNEL,
+    COMMAND_RADIO_BOOTLOADER
+  };
   struct Snapshot {
-    bool ethernet{false}, api{false}, proxy{false}, zwave_connected{false}, update_error{false}, checking{false}, update_verified{true};
+    bool ethernet{false}, api{false}, proxy{false}, zwave_connected{false}, update_error{false}, checking{false},
+        update_verified{true};
     uint32_t home_id{0}, uptime{0}, free_heap{0}, baud{0}, zwave_baud{0};
     update::UpdateState update_state{update::UPDATE_STATE_UNKNOWN};
-    std::string latest_version;
   } snapshot_;
+  static_assert(std::is_trivially_copyable_v<Snapshot>, "Periodic snapshots must not own heap storage");
   void send_json_(AsyncWebServerRequest *request, int code, const std::string &body);
   void error_(AsyncWebServerRequest *request, int code, const char *message);
   bool authorized_(AsyncWebServerRequest *request);
@@ -124,15 +141,15 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   ::StreamServerComponent *stream_{nullptr};
   binary_sensor::BinarySensor *busy_{nullptr};
   text_sensor::TextSensor *firmware_sensor_{nullptr}, *latest_sensor_{nullptr}, *board_sensor_{nullptr},
-                          *manufacturer_sensor_{nullptr}, *ieee_sensor_{nullptr}, *status_sensor_{nullptr};
+      *manufacturer_sensor_{nullptr}, *ieee_sensor_{nullptr}, *status_sensor_{nullptr};
   button::Button *check_button_{nullptr}, *flash_button_{nullptr}, *probe_button_{nullptr}, *reset_button_{nullptr},
-                 *pause_button_{nullptr}, *resume_button_{nullptr}, *bootloader_button_{nullptr};
+      *pause_button_{nullptr}, *resume_button_{nullptr}, *bootloader_button_{nullptr};
   switch_::Switch *gateway_beta_{nullptr}, *zigbee_beta_{nullptr};
-  #ifdef USE_TUBESZB_EFR32
+#ifdef USE_TUBESZB_EFR32
   efr32_flasher::EFR32Flasher *radio_flasher_{nullptr};
   script::Script<> *bootloader_script_{nullptr};
   text::Text *custom_url_{nullptr};
-  #endif
+#endif
 #if defined(USE_TUBESZB_EFR32) || defined(USE_TUBESZB_SERIAL_RADIO)
   select::Select *baud_{nullptr};
 #endif
@@ -140,7 +157,10 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   uint32_t radio_command_at_{0};
   std::string radio_checked_key_;
   std::string radio_requested_key_;
-  std::string radio_source_key_() const;
+  const std::string &radio_source_key_() const;
+  void refresh_radio_source_key_();
+  std::string radio_source_key_cache_;
+  uint32_t radio_baud_rate_{0};
 #ifdef USE_TUBESZB_CC2652
   cc2652_flasher::CC2652Flasher *radio_flasher_{nullptr};
   script::Script<> *cc_flash_script_{nullptr}, *cc_boot_probe_script_{nullptr};
@@ -158,13 +178,13 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   const char *board_{"ESP32"};
   std::mutex mutex_;
   std::string nonce_, mac_;
-  std::string check_source_, verified_source_;
-  Command command_{Command::NONE};
+  std::string check_source_, verified_source_, latest_version_;
+  Command command_{Command::COMMAND_NONE};
   std::string command_value_;
   PendingStart gateway_start_;
   RestartGuard restart_guard_;
-  bool radio_flash_active_{false};  // Native flash listener only; protected by mutex_.
-  bool action_pending_{false};  // Protected by mutex_, including the main-loop handoff.
+  bool radio_flash_active_{false};                       // Native flash listener only; protected by mutex_.
+  bool action_pending_{false};                           // Protected by mutex_, including the main-loop handoff.
   uint8_t gateway_ota_state_{0}, gateway_ota_error_{0};  // 0=idle, 1=installing, 2=verified, 3=failed/aborted
   float gateway_ota_progress_{-1.0f};
   bool checking_{false}, check_timeout_{false}, restart_pending_{false};

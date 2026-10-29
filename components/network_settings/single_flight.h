@@ -3,8 +3,12 @@
 namespace esphome::network_settings {
 class SingleFlight {
  public:
-  bool begin() { bool expected = false; return active_.compare_exchange_strong(expected, true); }
-  void end() { active_.store(false); }
+  bool begin() {
+    bool expected = false;
+    return this->active_.compare_exchange_strong(expected, true);
+  }
+  void end() { this->active_.store(false); }
+
  private:
   std::atomic<bool> active_{false};
 };

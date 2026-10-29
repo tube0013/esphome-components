@@ -17,16 +17,17 @@ extern const char NETWORK_PAGE[];
 
 class NetworkSettings : public Component, public AsyncWebHandler {
  public:
-  void set_http_request(http_request::HttpRequestComponent *request) { http_request_ = request; }
-  void set_update(http_request::HttpRequestUpdate *update) { update_ = update; }
-  bool internet_allowed() const { return internet_policy_.allowed(); }
-  bool use_without_internet() const { return internet_policy_.offline(); }
-  bool begin_connectivity_check() { return connectivity_check_.begin(); }
-  void end_connectivity_check() { connectivity_check_.end(); }
+  NetworkSettings(http_request::HttpRequestComponent *request, http_request::HttpRequestUpdate *update,
+                  ethernet::EthernetComponent *ethernet, web_server_base::WebServerBase *base)
+      : ethernet_(ethernet), base_(base), http_request_(request), update_(update) {}
+  bool internet_allowed() const { return this->internet_policy_.allowed(); }
+  bool use_without_internet() const { return this->internet_policy_.offline(); }
+  bool begin_connectivity_check() { return this->connectivity_check_.begin(); }
+  void end_connectivity_check() { this->connectivity_check_.end(); }
   bool set_use_without_internet(bool value);
-  Trigger<> *get_internet_enabled_trigger() { return &internet_enabled_trigger_; }
-  void set_ethernet(ethernet::EthernetComponent *ethernet) { ethernet_ = ethernet; }
-  void set_web_server_base(web_server_base::WebServerBase *base) { base_ = base; }
+  template<typename F> void add_on_internet_enabled_callback(F &&callback) {
+    this->internet_enabled_callbacks_.add(std::forward<F>(callback));
+  }
   float get_setup_priority() const override { return setup_priority::ETHERNET + 1.0f; }
   void setup() override;
   void loop() override;
@@ -34,10 +35,10 @@ class NetworkSettings : public Component, public AsyncWebHandler {
   bool canHandle(AsyncWebServerRequest *request) const override;
   void handleRequest(AsyncWebServerRequest *request) override;
   bool is_trial_active() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return state_.testing || state_.saved.phase == Phase::STAGED;
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    return this->state_.testing || this->state_.saved.phase == Phase::PHASE_STAGED;
   }
-  void set_mutation_guard(std::function<bool()> guard) { mutation_guard_ = std::move(guard); }
+  template<typename F> void set_mutation_guard(F &&guard) { this->mutation_guard_ = std::forward<F>(guard); }
 
  protected:
   bool save_(const SavedState &state);
@@ -54,7 +55,7 @@ class NetworkSettings : public Component, public AsyncWebHandler {
   web_server_base::WebServerBase *base_{nullptr};
   SingleFlight connectivity_check_;
   InternetPolicy internet_policy_;
-  Trigger<> internet_enabled_trigger_;
+  LazyCallbackManager<void()> internet_enabled_callbacks_;
   bool internet_enabled_pending_{false};
   GuardedHttp guarded_http_;
   http_request::HttpRequestComponent *http_request_{nullptr};

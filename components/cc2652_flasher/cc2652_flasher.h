@@ -43,7 +43,9 @@ class CC2652Flasher : public Component {
   void set_baud_preference_hash(uint32_t hash){ application_baud_.set_preference_hash(hash); }
   void set_runtime_baud_select(select::Select *value){ application_baud_.set_selector(value); }
   const zigbee_firmware_baud::FlashStatus &get_flash_status() const { return flash_status_; }
-  void set_flash_listener(std::function<void(const zigbee_firmware_baud::FlashStatus &)> listener) { flash_status_.listener = std::move(listener); }
+  template<typename F> void set_flash_listener(F &&listener) {
+    this->flash_status_.listener = std::forward<F>(listener);
+  }
   bool is_applying_manifest_baud() const { return application_baud_.applying_manifest(); }
   void set_erase_mode(uint8_t m){ erase_mode_ = m; }  // 0=sector,1=bank,2=auto
   void set_verbose(bool v){ verbose_ = v; }

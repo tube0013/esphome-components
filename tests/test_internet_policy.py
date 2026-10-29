@@ -72,7 +72,7 @@ int main() {
 
 
 def test_restore_order_and_update_parent():
-    source = (COMPONENTS_ROOT / 'network_settings/network_settings.cpp').read_text()
+    source = (COMPONENTS_ROOT / 'network_settings/network_settings.cpp').read_text().replace('this->', '')
     assert 'nvs_get_u8(handle, "offline_v1"' in source
     assert 'nvs_commit(handle)' in source
     assert 'update_->set_request_parent(&guarded_http_)' in source
@@ -80,3 +80,19 @@ def test_restore_order_and_update_parent():
 
 
 
+
+
+def test_guarded_http_public_api_contract() -> None:
+    """An ESPHome bump must recheck the real headers, not just our host doubles."""
+    import esphome
+    import re
+    source=(Path(esphome.__file__).parent/'components/http_request/http_request.h').read_text()
+    perform=re.search(r'virtual\s+std::shared_ptr<HttpContainer>\s+perform\((.*?)\)\s*=\s*0',source,re.S)
+    assert perform, "Review GuardedHttp: ESPHome's transport override changed"
+    assert 'const char *url' in perform[1] and 'const char *method' in perform[1]
+    assert 'const std::string &body' in perform[1]
+    assert 'const std::vector<Header> &' in perform[1]
+    assert 'const std::vector<std::string> &' in perform[1]
+    update=(Path(esphome.__file__).parent/'components/http_request/update/http_request_update.h').read_text()
+    assert 'void set_request_parent(HttpRequestComponent *' in update
+    assert 'const char *get_source_url() const' in update

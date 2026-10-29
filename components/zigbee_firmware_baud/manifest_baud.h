@@ -13,8 +13,10 @@ inline bool read_baud(JsonVariantConst image, JsonVariantConst root, uint32_t &b
     value = image["baudrate"];
   else if (root.is<JsonObjectConst>() && !root["baudrate"].isUnbound())
     value = root["baudrate"];
-  else return true;
-  if (!value.is<uint32_t>()) return false;
+  else
+    return true;
+  if (!value.is<uint32_t>())
+    return false;
   baud = value.as<uint32_t>();
   return valid_baud(baud);
 }

@@ -31,3 +31,9 @@ server applies that authentication to both management interfaces.
 Restart is available while checks or unstarted firmware actions are pending.
 Native OTA/radio flash events block restart during real firmware operations;
 the reboot grace period rechecks those events before restarting.
+
+The current cleanup keeps radio operation/controller refactoring separate; see
+[the agreed follow-up scope and ESPHome upgrade gate](docs/frontend-design-followups.md).
+The frontend requires an explicit `model` label, independent of the device hostname.
+Ruff and clang-format use the repository configuration; CI checks the touched
+management components and native helper headers.

@@ -1,10 +1,16 @@
 """Production asset packaging and native web policy helpers."""
 from component_paths import COMPONENTS_ROOT
 from pathlib import Path
+import re
 import gzip
 import importlib.util
 from html.parser import HTMLParser
 ROOT = Path(__file__).resolve().parents[1]
+
+def source_text(relative):
+    # These are binding checks, independent of formatting and explicit member qualification.
+    return re.sub(r"\s+", " ", (COMPONENTS_ROOT / relative).read_text().replace("this->", ""))
+
 
 def test_embedded_frontend_assets():
     spec = importlib.util.spec_from_file_location("tubeszb_assets", COMPONENTS_ROOT / "tubeszb_web/assets.py")
@@ -79,31 +85,55 @@ def test_cc2652_flash_session(tmp_path):
 
 
 def test_native_operation_status_bindings():
-    web=(COMPONENTS_ROOT/'tubeszb_web/tubeszb_web.cpp').read_text()
-    install=web.split('} else if (command == Command::INSTALL) {',1)[1].split('#ifdef USE_TUBESZB_ZIGBEE',1)[0]
+    web=source_text('tubeszb_web/tubeszb_web.cpp')
+    install=web.split('} else if (command == Command::COMMAND_INSTALL) {',1)[1].split('#ifdef USE_TUBESZB_ZIGBEE',1)[0]
     assert 'update_->state == update::UPDATE_STATE_AVAILABLE' in install
     assert 'valid_ota_url(update_->update_info.firmware_url)' in install
-    assert 'gateway_start_.arm(millis())' in install
+    assert 'gateway_start_.arm(now)' in install
     assert 'update_->on_ota_state(ota::OTA_ERROR' in web
     queued=web.split('} else if (url == "/tubeszb/install-update") {',1)[1].split('#ifdef USE_TUBESZB_ZIGBEE',1)[0]
     assert 'gateway_ota_state_ = 1' not in queued
     for family in ('efr32','cc2652'):
-        support=(COMPONENTS_ROOT/('tubeszb_web/'+family+'_support.cpp')).read_text()
+        support=source_text('tubeszb_web/'+family+'_support.cpp')
         assert 'radio_flasher_->set_flash_listener' in support
         native=(COMPONENTS_ROOT/(family+'_flasher')/(family+'_flasher.cpp')).read_text()
         assert 'FlashAttempt attempt(flash_status_)' in native
         assert 'if (ok) attempt.succeed();' in native
-    efr=(COMPONENTS_ROOT/'tubeszb_web/efr32_support.cpp').read_text()
+    efr=source_text('tubeszb_web/efr32_support.cpp')
     assert '>= 35000' in efr and 'Zigbee flash did not start' in efr
 
 
 def test_restart_recovery_bypasses_queued_but_not_active_writes():
-    source=(COMPONENTS_ROOT/'tubeszb_web/tubeszb_web.cpp').read_text()
+    source=source_text('tubeszb_web/tubeszb_web.cpp')
     handle=source.split('void TubesZBWeb::handleRequest(',1)[1]
     assert handle.index('if (!authorized_(request))') < handle.index('if (url == "/tubeszb/restart")')
     assert handle.index('if (url == "/tubeszb/restart")') < handle.index('if (restart_guard_.requested() || action_pending_')
     assert 'restart_guard_.request(gateway_ota_state_ == 1, radio_flash_active_)' in handle
     assert 'restart_guard_.ready(gateway_ota_state_ == 1, radio_flash_active_)' in source
     for family in ('efr32','cc2652'):
-        callback=(COMPONENTS_ROOT/('tubeszb_web/'+family+'_support.cpp')).read_text()
+        callback=source_text('tubeszb_web/'+family+'_support.cpp')
         assert 'radio_flash_active_ = status.result == 1' in callback
+
+
+def test_idle_sampling_does_not_recopy_sensor_strings():
+    header=source_text('tubeszb_web/tubeszb_web.h')
+    snapshot=header.split('struct Snapshot {',1)[1].split('} snapshot_;',1)[0]
+    assert 'std::string' not in snapshot
+    assert 'std::is_trivially_copyable_v<Snapshot>' in header
+    for family in ('cc2652','efr32'):
+        source=source_text('tubeszb_web/'+family+'_support.cpp')
+        sample=source.split('void TubesZBWeb::sample_radio_()',1)[1].split('void TubesZBWeb::radio_json_',1)[0]
+        for field in ('firmware','latest','board','manufacturer','ieee','url'):
+            assert not re.search(r'radio_\.'+field+r'\s*=',sample)
+        assert 'radio_source_key_cache_' in source
+        key=source.split('TubesZBWeb::radio_source_key_()',1)[1].split('}',1)[0]
+        assert 'return radio_source_key_cache_' in key and 'std::string(' not in key
+        assert 'sensor->add_on_state_callback' in source and 'radio_.*field = sensor->state' in source
+
+
+def test_loop_timing_uses_the_cached_component_tick():
+    for domain,cls in [('tubeszb_web','TubesZBWeb'),('network_settings','NetworkSettings')]:
+        source=source_text(domain+'/'+domain+'.cpp')
+        loop=source.split('void '+cls+'::loop()',1)[1].split('void '+cls+'::dump_config()',1)[0]
+        assert 'App.get_loop_component_start_time()' in loop
+        assert not re.search(r'\bmillis\(\)',loop)

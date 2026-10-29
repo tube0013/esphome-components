@@ -6,10 +6,14 @@ namespace esphome::tubeszb_web {
 // event arrives, its backend owns completion; this deadline never cancels a flash.
 class PendingStart {
  public:
-  void arm(uint32_t now) { pending_ = true; since_ = now; }
+  void arm(uint32_t now) {
+    pending_ = true;
+    since_ = now;
+  }
   void clear() { pending_ = false; }
   bool pending() const { return pending_; }
   bool expired(uint32_t now) const { return pending_ && uint32_t(now - since_) >= 30000; }
+
  private:
   bool pending_{false};
   uint32_t since_{0};
@@ -20,12 +24,14 @@ class RestartGuard {
  public:
   bool allowed(bool ota_active, bool radio_active) const { return !requested_ && !ota_active && !radio_active; }
   bool request(bool ota_active, bool radio_active) {
-    if (!allowed(ota_active, radio_active)) return false;
+    if (!allowed(ota_active, radio_active))
+      return false;
     requested_ = true;
     return true;
   }
   bool ready(bool ota_active, bool radio_active) const { return requested_ && !ota_active && !radio_active; }
   bool requested() const { return requested_; }
+
  private:
   bool requested_{false};
 };

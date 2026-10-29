@@ -12,6 +12,7 @@ ROOT=Path(__file__).resolve().parents[1]
     ('ezsp_bootloader_uart_test.cpp','ezsp_stubs'),
     ('manifest_baud_test.cpp',None),
     ('operation_start_test.cpp',None),
+    ('request_security_test.cpp',None),
 ])
 def test_native_protocol(source,stubs,tmp_path):
     includes=[ROOT]

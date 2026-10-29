@@ -4,18 +4,18 @@
 
 namespace esphome::network_settings {
 
-enum class Phase : uint32_t { CONFIRMED = 0, STAGED = 1, TESTING = 2 };
+enum class Phase : uint32_t { PHASE_CONFIRMED = 0, PHASE_STAGED = 1, PHASE_TESTING = 2 };
 
 struct SavedState {
   uint32_t magic{0x545A4E31};  // TZN1; changing the storage layout requires a new magic/key.
-  Phase phase{Phase::CONFIRMED};
+  Phase phase{Phase::PHASE_CONFIRMED};
   NetworkConfig confirmed{};
   NetworkConfig candidate{};
 };
 static_assert(sizeof(SavedState) == 56, "Changing the saved record layout requires a new NVS key/version");
 
 inline bool valid_saved_state(const SavedState &state) {
-  return state.magic == 0x545A4E31 && uint32_t(state.phase) <= uint32_t(Phase::TESTING) &&
+  return state.magic == 0x545A4E31 && uint32_t(state.phase) <= uint32_t(Phase::PHASE_TESTING) &&
          validate_config(state.confirmed) == nullptr && validate_config(state.candidate) == nullptr;
 }
 
@@ -30,56 +30,56 @@ class TrialState {
   uint32_t started_at{0};
 
   template<typename Save> bool boot(uint32_t now, Save save) {
-    active = saved.confirmed;
-    testing = false;
-    if (saved.phase == Phase::CONFIRMED)
+    this->active = this->saved.confirmed;
+    this->testing = false;
+    if (this->saved.phase == Phase::PHASE_CONFIRMED)
       return true;
-    SavedState next = saved;
-    next.phase = saved.phase == Phase::STAGED ? Phase::TESTING : Phase::CONFIRMED;
-    if (next.phase == Phase::CONFIRMED)
+    SavedState next = this->saved;
+    next.phase = this->saved.phase == Phase::PHASE_STAGED ? Phase::PHASE_TESTING : Phase::PHASE_CONFIRMED;
+    if (next.phase == Phase::PHASE_CONFIRMED)
       next.candidate = {};
     if (!save(next))
       return false;
-    saved = next;
-    if (saved.phase == Phase::TESTING) {
-      active = saved.candidate;
-      started_at = now;
-      testing = true;
+    this->saved = next;
+    if (this->saved.phase == Phase::PHASE_TESTING) {
+      this->active = this->saved.candidate;
+      this->started_at = now;
+      this->testing = true;
     }
     return true;
   }
 
   template<typename Save> bool stage(const NetworkConfig &config, Save save) {
-    if (testing || saved.phase != Phase::CONFIRMED || validate_config(config) != nullptr)
+    if (this->testing || this->saved.phase != Phase::PHASE_CONFIRMED || validate_config(config) != nullptr)
       return false;
-    SavedState next = saved;
+    SavedState next = this->saved;
     next.candidate = config;
-    next.phase = Phase::STAGED;
+    next.phase = Phase::PHASE_STAGED;
     if (!save(next))
       return false;
-    saved = next;
+    this->saved = next;
     return true;
   }
 
-  bool expired(uint32_t now) const { return testing && uint32_t(now - started_at) >= TIMEOUT_MS; }
+  bool expired(uint32_t now) const { return this->testing && uint32_t(now - this->started_at) >= TIMEOUT_MS; }
   uint32_t remaining_seconds(uint32_t now) const {
-    if (!testing || expired(now))
+    if (!this->testing || expired(now))
       return 0;
-    return (TIMEOUT_MS - uint32_t(now - started_at) + 999) / 1000;
+    return (TIMEOUT_MS - uint32_t(now - this->started_at) + 999) / 1000;
   }
 
   template<typename Save> bool finish(bool keep, uint32_t now, Save save) {
-    if (!testing || (keep && expired(now)))
+    if (!this->testing || (keep && expired(now)))
       return false;
-    SavedState next = saved;
+    SavedState next = this->saved;
     if (keep)
-      next.confirmed = active;
+      next.confirmed = this->active;
     next.candidate = {};
-    next.phase = Phase::CONFIRMED;
+    next.phase = Phase::PHASE_CONFIRMED;
     if (!save(next))
       return false;
-    saved = next;
-    testing = false;
+    this->saved = next;
+    this->testing = false;
     return true;
   }
 };

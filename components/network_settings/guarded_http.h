@@ -10,17 +10,20 @@ namespace esphome::network_settings {
 class GuardedHttp : public http_request::HttpRequestComponent {
  public:
   void bind(InternetPolicy *policy, http_request::HttpRequestComponent *parent) {
-    policy_ = policy; parent_ = parent; set_timeout(parent->get_timeout());
+    this->policy_ = policy;
+    this->parent_ = parent;
+    this->set_timeout(parent->get_timeout());
   }
+
  protected:
-  std::shared_ptr<http_request::HttpContainer> perform(const char *url, const char *method,
-      const std::string &body, const std::vector<http_request::Header> &headers,
-      const std::vector<std::string> &collect) override {
-    if (!policy_->allowed()) {
+  std::shared_ptr<http_request::HttpContainer> perform(const char *url, const char *method, const std::string &body,
+                                                       const std::vector<http_request::Header> &headers,
+                                                       const std::vector<std::string> &collect) override {
+    if (!this->policy_->allowed()) {
       ESP_LOGI("network_settings", "Skipping firmware manifest: Use without internet is enabled or not restored yet");
       return nullptr;
     }
-    return parent_->start(url, method, body, headers, collect);
+    return this->parent_->start(url, method, body, headers, collect);
   }
   InternetPolicy *policy_{nullptr};
   http_request::HttpRequestComponent *parent_{nullptr};
