@@ -103,10 +103,9 @@ void TubesZBWeb::setup_radio_() {
   }
 }
 
-void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *message, size_t length) {
+void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *, size_t) {
   if (strcmp(tag, "efr32_flasher") != 0)
     return;
-  const std::string line(message, std::min(length, size_t(512)));
   std::lock_guard<std::mutex> lock(this->mutex_);
   if (this->radio_.operation != "flash" && level <= ESPHOME_LOG_LEVEL_ERROR && this->radio_.result == 1)
     this->radio_.result = 3;

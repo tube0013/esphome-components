@@ -147,3 +147,12 @@ def test_baud_label_callback_matches_installed_select_api() -> None:
         source=source_text('tubeszb_web/'+name)
         assert 'baud_->add_on_state_callback([this](size_t)' in source
         assert 'radio_.selected_baud = baud_->current_option()' in source
+
+
+def test_native_flash_logs_do_not_allocate_unused_message_copies() -> None:
+    efr=source_text('tubeszb_web/efr32_support.cpp')
+    log=efr.split('void TubesZBWeb::radio_log_',1)[1].split('void TubesZBWeb::run_radio_command_',1)[0]
+    assert 'std::string line' not in log
+    cc=source_text('tubeszb_web/cc2652_support.cpp')
+    log=cc.split('void TubesZBWeb::radio_log_',1)[1].split('void TubesZBWeb::queue_cc2652_automatic_',1)[0]
+    assert log.index('if (radio_flash_active_)') < log.index('const std::string line')

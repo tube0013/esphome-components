@@ -87,6 +87,11 @@ void TubesZBWeb::setup_radio_() {
 void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *message, size_t length) {
   if (strcmp(tag, "cc2652_flasher") != 0)
     return;
+  {
+    std::lock_guard<std::mutex> lock(this->mutex_);
+    if (this->radio_flash_active_)
+      return;  // FlashStatus already owns these events; avoid even copying the log.
+  }
   const std::string line(message, std::min(length, size_t(512)));
   const auto event = decode_cc2652_log(line);
   using E = CC2652LogEvent::Kind;
