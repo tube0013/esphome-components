@@ -1,3 +1,4 @@
+#include "esphome/components/zigbee_firmware_baud/runtime_baud.h"
 // cc2652_flasher.h - ESPHome external component for CC2652 flashing
 #pragma once
 
@@ -37,6 +38,10 @@ class CC2652Flasher : public Component {
   void set_update_url(const std::string &u){ manifest_url_ = u; }
   void set_boot_baud(uint32_t b){ boot_baud_ = b; }
   void set_restore_baud(uint32_t b){ restore_baud_rate_ = b; }
+  void set_runtime_baud_rate(uint32_t b){ restore_baud_rate_ = b; application_baud_.manual(b); }
+  void set_baud_preference_hash(uint32_t hash){ application_baud_.set_preference_hash(hash); }
+  void set_runtime_baud_select(select::Select *value){ application_baud_.set_selector(value); }
+  bool is_applying_manifest_baud() const { return application_baud_.applying_manifest(); }
   void set_erase_mode(uint8_t m){ erase_mode_ = m; }  // 0=sector,1=bank,2=auto
   void set_verbose(bool v){ verbose_ = v; }
   void set_show_progress(bool v){ show_progress_ = v; }
@@ -142,6 +147,8 @@ class CC2652Flasher : public Component {
   uint8_t znp_product_{0xFF};
   bool detect_on_boot_{true};
   uint16_t detect_on_boot_delay_ms_{0};
+  zigbee_firmware_baud::RuntimeBaud application_baud_;
+  uint32_t manifest_baudrate_{0};
 };
 
 class UpdateFirmwareAction : public esphome::Action<> {

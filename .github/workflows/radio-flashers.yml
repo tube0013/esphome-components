@@ -1,0 +1,24 @@
+name: Native radio flasher tests
+on:
+  pull_request:
+    paths: ['components/cc2652_flasher/**', 'components/efr32_flasher/**', 'components/efr32_info/**', 'components/zigbee_firmware_baud/**', 'tests/**', '.github/workflows/radio-flashers.yml']
+  push:
+    branches: [main, 'codex/**']
+    paths: ['components/cc2652_flasher/**', 'components/efr32_flasher/**', 'components/efr32_info/**', 'components/zigbee_firmware_baud/**', 'tests/**', '.github/workflows/radio-flashers.yml']
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install pytest
+      - name: Supply the pinned JSON headers used by the tested ESPHome firmware
+        run: git clone --depth 1 --branch v7.4.3 https://github.com/bblanchon/ArduinoJson.git /tmp/arduinojson
+      - name: Check baud persistence, selected-image metadata and ASH/EZSP transport
+        env:
+          ARDUINOJSON_INCLUDE: /tmp/arduinojson/src
+        run: python -m pytest -q tests

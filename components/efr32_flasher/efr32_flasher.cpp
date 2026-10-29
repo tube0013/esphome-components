@@ -1,5 +1,7 @@
+#include "esphome/components/zigbee_firmware_baud/manifest_baud.h"
 // ====== EFR32 Flasher (external component) ======
 #include "esphome/components/efr32_flasher/efr32_flasher.h"
+#include "ezsp_bootloader_uart.h"
 #include "esphome/components/efr32_info/ash_util.h"
 #include <vector>
 #include <string>
@@ -73,6 +75,8 @@ EFR32Flasher::~EFR32Flasher() {}
 void EFR32Flasher::setup(){
   // Avoid any UART activity at boot to prevent consuming ASH startup frames.
   // If needed, a manual probe action can be invoked later.
+  application_baud_.setup(runtime_baud_rate_ != 0 ? runtime_baud_rate_ : uart_->get_baud_rate());
+  runtime_baud_rate_ = application_baud_.current();
   this->apply_runtime_baud_();
 }
 
@@ -97,8 +101,11 @@ void EFR32Flasher::set_uart_baud_(uint32_t baud) {
   if (this->uart_ != nullptr) {
     auto *idf_uart = static_cast<esphome::uart::IDFUARTComponent *>(this->uart_);
     uart_port_t port = static_cast<uart_port_t>(idf_uart->get_hw_serial_number());
-    uart_set_pin(port, 4, 36, 2, 13);
-    uart_set_hw_flow_ctrl(port, UART_HW_FLOWCTRL_CTS_RTS, 122);
+    // load_settings() restores the configured TX/RX pins. Only MG24 boards
+    // use these RTS/CTS pins; older radios must retain their own two-wire UART.
+    if (hardware_flow_control_) uart_set_pin(port, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE, 2, 13);
+    uart_set_hw_flow_ctrl(port, hardware_flow_control_ ? UART_HW_FLOWCTRL_CTS_RTS : UART_HW_FLOWCTRL_DISABLE,
+                          hardware_flow_control_ ? 122 : 0);
   }
 #endif
   // Give the hardware a moment to settle at the new rate.
@@ -198,6 +205,7 @@ bool EFR32Flasher::http_open_(const std::string &url, esp_http_client_handle_t &
 }
 
 bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_out){
+  manifest_baudrate_ = 0;
   if (ends_with_ignore_query_(url, ".gbl")) {
     fw_url_out = url;
     ESP_LOGI(TAG, "Direct GBL URL configured; skipping manifest fetch");
@@ -235,6 +243,11 @@ bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_o
 
   fw_url_out.clear(); expected_md5_.clear(); expected_size_=0; manifest_version_.clear();
 
+  if (variant_force_ == 3 && !doc["variants"].isNull()) {
+    ESP_LOGE(TAG, "This model requires its own flat manifest; variant catalogs are not accepted");
+    return false;
+  }
+  JsonVariantConst selected_image = doc.as<JsonVariantConst>();
   // Try variants object: choose based on forced variant or autodetected key
   if (doc["variants"].is<JsonObjectConst>()){
     auto obj = doc["variants"].as<JsonObjectConst>();
@@ -246,7 +259,7 @@ bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_o
     if (!key.empty()){
       auto v = obj[key.c_str()];
       if (!v.isNull()){
-        if (v["fw_url"].is<const char*>()) fw_url_out = v["fw_url"].as<const char*>();
+        if (v["fw_url"].is<const char*>()) { fw_url_out = v["fw_url"].as<const char*>(); selected_image = v; }
         if (v["md5"].is<const char*>()) expected_md5_ = v["md5"].as<const char*>();
         if (v["size"].is<uint32_t>()) expected_size_ = v["size"].as<uint32_t>();
         ESP_LOGI(TAG, "Manifest variant '%s' selected", key.c_str());
@@ -260,7 +273,7 @@ bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_o
                (unsigned) obj.size());
       for (auto kv : obj) {
         auto v = kv.value();
-        if (v["fw_url"].is<const char*>()) fw_url_out = v["fw_url"].as<const char*>();
+        if (v["fw_url"].is<const char*>()) { fw_url_out = v["fw_url"].as<const char*>(); selected_image = v; }
         if (v["md5"].is<const char*>()) expected_md5_ = v["md5"].as<const char*>();
         if (v["size"].is<uint32_t>()) expected_size_ = v["size"].as<uint32_t>();
         ESP_LOGI(TAG, "Using manifest variant '%s' as fallback", kv.key().c_str());
@@ -269,6 +282,7 @@ bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_o
     }
   }
   if (fw_url_out.empty()){
+    selected_image = doc.as<JsonVariantConst>();
     if (doc["fw_url"].is<const char*>()) fw_url_out = doc["fw_url"].as<const char*>();
     else if (doc["firmware_url"].is<const char*>()) fw_url_out = doc["firmware_url"].as<const char*>();
     else if (doc["url"].is<const char*>()) fw_url_out = doc["url"].as<const char*>();
@@ -279,14 +293,57 @@ bool EFR32Flasher::fetch_manifest_(const std::string &url, std::string &fw_url_o
   if (doc["version"].is<const char*>()) manifest_version_ = doc["version"].as<const char*>();
 
   if (fw_url_out.empty()) { ESP_LOGE(TAG, "Manifest missing firmware URL."); return false; }
+  if (!zigbee_firmware_baud::read_baud(selected_image, doc.as<JsonVariantConst>(), manifest_baudrate_) ||
+      (manifest_baudrate_ != 0 && !application_baud_.supports(manifest_baudrate_))) {
+    ESP_LOGE(TAG, "Invalid or unsupported manifest baudrate; expected a supported integer application baud");
+    return false;
+  }
+  if (manifest_baudrate_ != 0) ESP_LOGI(TAG, "Manifest application baudrate=%u", unsigned(manifest_baudrate_));
   if (!expected_md5_.empty()) ESP_LOGI(TAG, "Manifest MD5=%s", expected_md5_.c_str());
   if (expected_size_) ESP_LOGI(TAG, "Manifest size=%u", (unsigned)expected_size_);
   if (!manifest_version_.empty()) ESP_LOGI(TAG, "Manifest version=%s", manifest_version_.c_str());
   return true;
 }
 
-void EFR32Flasher::enter_bootloader_(){
-  if (!bl_sw_ || !rst_sw_) return;
+bool EFR32Flasher::probe_bootloader_menu_(uint32_t timeout_ms) {
+  ezsp_bootloader::Menu menu;
+  const auto start = millis();
+  uint32_t prompted = start;
+  uart_->write_byte('\n');
+  while (millis() - start < timeout_ms) {
+    uint8_t byte;
+    if (uart_->available() && uart_->read_byte(&byte)) {
+      if (menu.feed(byte)) return true;
+    } else delay_(1);
+    if (millis() - prompted >= 500) { uart_->write_byte('\n'); prompted = millis(); }
+  }
+  return false;
+}
+
+bool EFR32Flasher::enter_bootloader_(){
+  if (ezsp_bootloader_) {
+    // First recognize a manually entered/already-running bootloader at its own baud.
+    apply_bootloader_baud_();
+    if (probe_bootloader_menu_(700)) { bootloader_ready_ = true; return true; }
+    // EZSP commands must use the installed application's baud, before retuning.
+    apply_runtime_baud_();
+    flush_uart_();
+    ESP_LOGI(TAG, "Launching Gecko bootloader over EZSP (no boot GPIO)");
+    EZSPBootloaderUART transport(uart_);
+    const auto result = ezsp_bootloader::launch(transport);
+    ESP_LOGI(TAG, "Software bootloader entry: %s", ezsp_bootloader::describe(result));
+    apply_bootloader_baud_();
+    // Some applications reset before their final EZSP reply. The actual menu
+    // is authoritative; never begin XMODEM merely because a command was sent.
+    if (probe_bootloader_menu_(4000)) { bootloader_ready_ = true; return true; }
+    ESP_LOGE(TAG, "Bootloader entry failed: no Gecko menu. Use the physical boot button if the NCP is unresponsive");
+    bootloader_ready_ = false;
+    leave_bootloader_();
+    apply_runtime_baud_();
+    return false;
+  }
+  if (!bl_sw_ || !rst_sw_) return false;
+  apply_bootloader_baud_();
   ESP_LOGI(TAG, "Entering Gecko bootloader (BL+RST)…");
   // Mirror the proven sequence used in your YAML script:
   // 1) Assert boot pin
@@ -303,9 +360,12 @@ void EFR32Flasher::enter_bootloader_(){
   delay_(200);
   // Clear any spuriously buffered bytes before menu selection
   flush_uart_();
+  bootloader_ready_ = true;
+  return true;
 }
 
 void EFR32Flasher::leave_bootloader_(){
+  bootloader_ready_ = false;
   if (!rst_sw_) return;
   ESP_LOGD(TAG, "Exiting bootloader via reset…");
   rst_sw_->turn_on(); delay_(15); rst_sw_->turn_off();
@@ -427,10 +487,12 @@ void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t 
 }
 
 void EFR32Flasher::run_update_(){
-  apply_runtime_baud_();
+  // A direct GBL must not inherit baud/integrity metadata from an earlier check.
+  manifest_baudrate_ = 0; expected_md5_.clear(); expected_size_ = 0;
+  if (!bootloader_ready_) apply_runtime_baud_();
   ESP_LOGI(TAG, "run_update start variant_force=%u override='%s'", static_cast<unsigned>(variant_force_),
            variant_key_override_.c_str());
-  if(!uart_ || !bl_sw_ || !rst_sw_){ ESP_LOGE(TAG, "Not configured (uart/switches)"); return; }
+  if(!uart_ || (!ezsp_bootloader_ && !bl_sw_) || !rst_sw_){ ESP_LOGE(TAG, "Not configured (uart/switches)"); return; }
   variant_key_override_.clear();
   if (variant_force_ == 0){
     variant_key_override_ = detect_variant_key_();
@@ -454,8 +516,12 @@ void EFR32Flasher::run_update_(){
   int64_t len64 = esp_http_client_get_content_length(client);
   uint32_t content_len = len64 > 0 ? (uint32_t)len64 : 0;
 
-  apply_bootloader_baud_();
-  enter_bootloader_();
+  if (!enter_bootloader_()) {
+    esp_http_client_close(client); esp_http_client_cleanup(client);
+    ESP_LOGE(TAG, "EFR32 update failed before transfer: bootloader entry failed");
+    set_busy_(false);
+    return;
+  }
   ESP_LOGD(TAG, "Bootloader entered, starting upload");
   // Allow BL banner/prompt to appear, then select '1' (upload gbl)
   delay_(1000);
@@ -473,7 +539,12 @@ void EFR32Flasher::run_update_(){
   esp_http_client_close(client); esp_http_client_cleanup(client);
 
   leave_bootloader_();
+  if (ok && manifest_baudrate_ != 0) runtime_baud_rate_ = manifest_baudrate_;
   apply_runtime_baud_();
+  if (ok && manifest_baudrate_ != 0 && !application_baud_.commit(manifest_baudrate_)) {
+    ESP_LOGE(TAG, "Radio transfer succeeded but saving the application baud failed");
+    ok = false;
+  }
   ESP_LOGI(TAG, "run_update finished ok=%d", ok ? 1 : 0);
   if (ok) {
     ESP_LOGI(TAG, "EFR32 update finished OK. Waiting for NCP start marker…");
@@ -489,7 +560,7 @@ void EFR32Flasher::run_update_(){
 }
 
 void EFR32Flasher::run_check_update_(){
-  apply_runtime_baud_();
+  if (!bootloader_ready_) apply_runtime_baud_();
   ESP_LOGI(TAG, "Checking EFR32 firmware manifest…");
   if (manifest_url_.empty()) {
     ESP_LOGW(TAG, "No manifest URL configured; skipping update check.");
@@ -724,7 +795,17 @@ void EFR32Flasher::run_check_update_(){
 } */
 #endif  // legacy probing
 
+void EFR32Flasher::run_bootloader_() {
+  bootloader_running_ = true;
+  set_busy_(true);
+  if (enter_bootloader_()) ESP_LOGI(TAG, "Manual bootloader ready.");
+  else ESP_LOGE(TAG, "Manual bootloader entry failed.");
+  set_busy_(false);
+  bootloader_running_ = false;
+}
+
 void EFR32Flasher::loop(){
+  if (want_bootloader_) { want_bootloader_ = false; run_bootloader_(); return; }
   if (want_check_){ want_check_ = false; run_check_update_(); return; }
   if (!want_update_) return; want_update_ = false; run_update_();
 }

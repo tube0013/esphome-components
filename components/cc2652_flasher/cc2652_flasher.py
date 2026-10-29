@@ -1,12 +1,13 @@
+import zlib
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import uart, switch as switch_, text_sensor
+from esphome.components import select, uart, switch as switch_, text_sensor
 from esphome.const import CONF_ID, CONF_URL
 from esphome.automation import register_action
 
 DEPENDENCIES = ["uart", "switch"]
 # Only pull in what we actually need for linking
-AUTO_LOAD = ["md5", "json"]
+AUTO_LOAD = ["md5", "json", "zigbee_firmware_baud"]
 
 CONF_BSL_SWITCH = "bsl_switch"
 CONF_RST_SWITCH = "rst_switch"
@@ -40,6 +41,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(CC2652Flasher),
         cv.Required(CONF_URL): cv.string_strict,
         cv.Required("uart_id"): cv.use_id(uart.UARTComponent),
+        cv.Optional("runtime_baud_select"): cv.use_id(select.Select),
         cv.Required(CONF_BSL_SWITCH): cv.use_id(switch_.Switch),
         cv.Required(CONF_RST_SWITCH): cv.use_id(switch_.Switch),
         cv.Optional(CONF_BOOT_BAUD, default=0): cv.int_range(min=0),
@@ -115,6 +117,10 @@ async def to_code(config):
     # Build system will compile cc2652_flasher.cpp (we also list it in YAML includes).
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    preference_hash = zlib.crc32(("cc2652_flasher:" + str(config[CONF_ID]) + ":runtime_baud").encode())
+    cg.add(var.set_baud_preference_hash(preference_hash))
+    if "runtime_baud_select" in config:
+        cg.add(var.set_runtime_baud_select(await cg.get_variable(config["runtime_baud_select"])))
 
     cg.add(var.set_update_url(config[CONF_URL]))
 
