@@ -15,6 +15,15 @@ int main() {
     assert(!tubeszb_web::valid_ota_url(url));
   assert(tubeszb_web::valid_ota_url("https://example.test/ota.bin"));
   assert(tubeszb_web::valid_ota_url("http://192.168.1.5/ota.bin"));
+  tubeszb_web::RestartGuard restart;
+  assert(!restart.allowed(true,false)); assert(!restart.allowed(false,true));
+  assert(!restart.request(true,false)); assert(!restart.request(false,true));
+  // Queued/no-start/check states have no active writer and permit recovery.
+  assert(restart.request(false,false)); assert(!restart.allowed(false,false));
+  assert(!restart.request(false,false)); assert(restart.ready(false,false));
+  // A writer starting during the response grace period must postpone reboot.
+  assert(!restart.ready(true,false)); assert(!restart.ready(false,true));
+  assert(restart.ready(false,false));
   network_settings::SingleFlight flight;
   std::atomic<unsigned> winners{0}; std::vector<std::thread> workers;
   for (int i=0;i<8;++i) workers.emplace_back([&]() { if (flight.begin()) ++winners; });

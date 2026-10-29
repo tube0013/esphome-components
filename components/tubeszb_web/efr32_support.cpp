@@ -17,6 +17,7 @@ void TubesZBWeb::setup_radio_() {
     std::lock_guard<std::mutex> lock(mutex_);
     radio_.operation = "flash";
     radio_.result = status.result; radio_.progress = status.progress;
+    radio_flash_active_ = status.result == 1;
     radio_.busy = status.result == 1;
     radio_command_at_ = millis();
     radio_.status = status.result == 1 ? "Zigbee flash in progress" :

@@ -128,7 +128,10 @@
       q('[data-action="'+action+'"]').disabled = disabled || Boolean(network?.testing) || Boolean(device?.checking) || device?.update_state === 3;
     }
     for (const action of ['check-update','install-update']) q('[data-action="'+action+'"]').disabled ||= Boolean(network?.use_without_internet);
-    qa('[data-action="restart"]').forEach(element => { element.disabled = disabled || device?.update_state === 3; });
+    // The backend distinguishes queued/recovery states from real firmware writes.
+    const restartBlocked = device?.restart_allowed === undefined ? disabled || device?.update_state === 3 :
+      !device || !network || busy || restarting || uploading || !device.restart_allowed;
+    qa('[data-action="restart"]').forEach(element => { element.disabled = restartBlocked; });
     qa('[data-channel]').forEach(element => { element.disabled = disabled || Boolean(network?.testing) || device?.checking || (element.dataset.channel === "zigbee" && device?.zigbee?.supports_zigbee_beta === false); });
     for (const action of ['radio-check','radio-flash','radio-probe','radio-reset','serial-pause','serial-resume','radio-baud','radio-url-save','radio-url-clear','radio-bootloader']) {
       q('[data-action="'+action+'"]').disabled = disabled || Boolean(network?.testing) || Boolean(device?.checking);

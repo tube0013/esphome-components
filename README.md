@@ -27,3 +27,7 @@ The Origin and per-boot UI nonce checks protect against accidental cross-site
 mutations; they do not authenticate LAN clients or prevent DNS rebinding.
 Configure ESPHome `web_server.auth` when access control is required. The shared
 server applies that authentication to both management interfaces.
+
+Restart is available while checks or unstarted firmware actions are pending.
+Native OTA/radio flash events block restart during real firmware operations;
+the reboot grace period rechecks those events before restarting.

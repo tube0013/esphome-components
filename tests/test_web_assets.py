@@ -95,3 +95,15 @@ def test_native_operation_status_bindings():
         assert 'if (ok) attempt.succeed();' in native
     efr=(COMPONENTS_ROOT/'tubeszb_web/efr32_support.cpp').read_text()
     assert '>= 35000' in efr and 'Zigbee flash did not start' in efr
+
+
+def test_restart_recovery_bypasses_queued_but_not_active_writes():
+    source=(COMPONENTS_ROOT/'tubeszb_web/tubeszb_web.cpp').read_text()
+    handle=source.split('void TubesZBWeb::handleRequest(',1)[1]
+    assert handle.index('if (!authorized_(request))') < handle.index('if (url == "/tubeszb/restart")')
+    assert handle.index('if (url == "/tubeszb/restart")') < handle.index('if (restart_guard_.requested() || action_pending_')
+    assert 'restart_guard_.request(gateway_ota_state_ == 1, radio_flash_active_)' in handle
+    assert 'restart_guard_.ready(gateway_ota_state_ == 1, radio_flash_active_)' in source
+    for family in ('efr32','cc2652'):
+        callback=(COMPONENTS_ROOT/('tubeszb_web/'+family+'_support.cpp')).read_text()
+        assert 'radio_flash_active_ = status.result == 1' in callback

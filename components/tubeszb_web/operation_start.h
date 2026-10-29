@@ -14,6 +14,21 @@ class PendingStart {
   bool pending_{false};
   uint32_t since_{0};
 };
+// Queued/check/recovery states may be interrupted. Once accepted, a restart
+// waits if a firmware writer starts during the HTTP-response grace period.
+class RestartGuard {
+ public:
+  bool allowed(bool ota_active, bool radio_active) const { return !requested_ && !ota_active && !radio_active; }
+  bool request(bool ota_active, bool radio_active) {
+    if (!allowed(ota_active, radio_active)) return false;
+    requested_ = true;
+    return true;
+  }
+  bool ready(bool ota_active, bool radio_active) const { return requested_ && !ota_active && !radio_active; }
+  bool requested() const { return requested_; }
+ private:
+  bool requested_{false};
+};
 inline bool valid_ota_url(const std::string &url) {
   const size_t prefix = url.compare(0, 7, "http://") == 0 ? 7 : url.compare(0, 8, "https://") == 0 ? 8 : 0;
   return prefix != 0 && url.size() > prefix && url[prefix] != '/';

@@ -74,7 +74,7 @@ void TubesZBWeb::check_gateway_update() {
   if (!settings_->internet_allowed()) return;
   {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (checking_ || command_ != Command::NONE || gateway_ota_state_ == 1 || update_->state == update::UPDATE_STATE_INSTALLING || !ethernet_->is_connected())
+    if (restart_guard_.requested() || checking_ || command_ != Command::NONE || gateway_ota_state_ == 1 || update_->state == update::UPDATE_STATE_INSTALLING || !ethernet_->is_connected())
       return;
 #ifdef USE_TUBESZB_ZIGBEE
     if (radio_.busy || radio_.result == 1) return;
@@ -141,8 +141,12 @@ void TubesZBWeb::loop() {
     check_timeout_ = !update_->status_has_error();
     checking_ = false;
   }
-  if (restart_pending_ && int32_t(millis() - restart_at_) >= 0)
-    App.safe_reboot();
+  bool restart_now = false;
+  if (restart_pending_ && int32_t(millis() - restart_at_) >= 0) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    restart_now = restart_guard_.ready(gateway_ota_state_ == 1, radio_flash_active_);
+  }
+  if (restart_now) App.safe_reboot();
   if (command == Command::NONE && uint32_t(millis() - sampled_at_) < 1000)
     return;
   sampled_at_ = millis();
@@ -171,7 +175,7 @@ void TubesZBWeb::loop() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_ = std::move(next);
-    action_pending_ = restart_pending_ || gateway_start_.pending();
+    action_pending_ = restart_pending_ || gateway_start_.pending() || command_ != Command::NONE;
   }
 }
 
@@ -266,6 +270,7 @@ void TubesZBWeb::status_(AsyncWebServerRequest *request) {
     root["update_verified"] = snapshot_.update_verified;
     root["checking"] = snapshot_.checking || command_ == Command::CHECK;
     root["action_pending"] = action_pending_;
+    root["restart_allowed"] = restart_guard_.allowed(gateway_ota_state_ == 1, radio_flash_active_);
   });
   payload.assign(body.c_str(), body.size());
   }
@@ -301,7 +306,18 @@ void TubesZBWeb::handleRequest(AsyncWebServerRequest *request) {
   const bool internet_allowed = settings_->internet_allowed();
   std::unique_lock<std::mutex> lock(mutex_);
   auto reject = [&](int code, const char *message) { lock.unlock(); error_(request, code, message); };
-  if (action_pending_ || gateway_ota_state_ == 1 || snapshot_.update_state == update::UPDATE_STATE_INSTALLING || snapshot_.checking) {
+  // Recovery must remain available when a queued updater never starts. Native
+  // OTA/flash events, rather than optimistic UI flags, protect real writes.
+  if (url == "/tubeszb/restart") {
+    if (!restart_guard_.request(gateway_ota_state_ == 1, radio_flash_active_)) {
+      reject(409, "Wait for the active firmware write or requested restart to finish."); return;
+    }
+    command_ = Command::RESTART; command_value_.clear(); action_pending_ = true;
+    lock.unlock();
+    send_json_(request, 200, "{\"ok\":true}");
+    return;
+  }
+  if (restart_guard_.requested() || action_pending_ || gateway_ota_state_ == 1 || snapshot_.update_state == update::UPDATE_STATE_INSTALLING || snapshot_.checking) {
     reject(409, "Another device action is in progress.");
     return;
   }
@@ -311,7 +327,7 @@ void TubesZBWeb::handleRequest(AsyncWebServerRequest *request) {
     return;
   }
 #endif
-  if (url != "/tubeszb/restart" && network_trial) {
+  if (network_trial) {
     reject(409, "Keep or revert the network trial before updating firmware.");
     return;
   }
@@ -320,9 +336,7 @@ void TubesZBWeb::handleRequest(AsyncWebServerRequest *request) {
       (url == "/tubeszb/zigbee-action" && (radio_action == "check" || radio_action == "flash")))) {
     reject(409, "Use without internet is enabled. Disable it in Network to check or download firmware."); return;
   }
-  if (url == "/tubeszb/restart") {
-    command_ = Command::RESTART;
-  } else if (url == "/tubeszb/check-update") {
+  if (url == "/tubeszb/check-update") {
     if (!snapshot_.ethernet) {
       reject(409, "Ethernet is not connected.");
       return;

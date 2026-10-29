@@ -162,6 +162,8 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   Command command_{Command::NONE};
   std::string command_value_;
   PendingStart gateway_start_;
+  RestartGuard restart_guard_;
+  bool radio_flash_active_{false};  // Native flash listener only; protected by mutex_.
   bool action_pending_{false};  // Protected by mutex_, including the main-loop handoff.
   uint8_t gateway_ota_state_{0}, gateway_ota_error_{0};  // 0=idle, 1=installing, 2=verified, 3=failed/aborted
   float gateway_ota_progress_{-1.0f};
