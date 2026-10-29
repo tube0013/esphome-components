@@ -1,3 +1,6 @@
+#include "esphome/components/zigbee_firmware_baud/manifest_baud.h"
+#include "esphome/components/zigbee_firmware_baud/runtime_baud.h"
+#include "esphome/components/zigbee_firmware_baud/flash_status.h"
 
 // ====== CC2652 Flasher (external component) ======
 #include <vector>
@@ -61,6 +64,14 @@ class CC2652Flasher : public Component {
   void set_update_url(const std::string &u){ manifest_url_ = u; }
   void set_boot_baud(uint32_t b){ boot_baud_ = b; }
   void set_restore_baud(uint32_t b){ restore_baud_rate_ = b; }
+  void set_runtime_baud_rate(uint32_t b){ restore_baud_rate_ = b; application_baud_.manual(b); }
+  void set_baud_preference_hash(uint32_t hash){ application_baud_.set_preference_hash(hash); }
+  void set_runtime_baud_select(select::Select *value){ application_baud_.set_selector(value); }
+  const zigbee_firmware_baud::FlashStatus &get_flash_status() const { return flash_status_; }
+  template<typename F> void set_flash_listener(F &&listener) {
+    this->flash_status_.listener = std::forward<F>(listener);
+  }
+  bool is_applying_manifest_baud() const { return application_baud_.applying_manifest(); }
   void set_erase_mode(uint8_t m){ erase_mode_ = m; }  // 0=sector,1=bank,2=auto
   void set_verbose(bool v){ verbose_ = v; }
   void set_show_progress(bool v){ show_progress_ = v; }
@@ -80,6 +91,9 @@ class CC2652Flasher : public Component {
   void start_detect_variant(){ want_detect_ = true; }
 
   void setup() override {
+    application_baud_.setup(restore_baud_rate_ != 0 ? restore_baud_rate_ : uart_->get_baud_rate());
+    restore_baud_rate_ = application_baud_.current();
+    restore_baud_();
     // Optionally detect variant very early at boot
     if (detect_on_boot_) {
       if (detect_on_boot_delay_ms_ == 0) {
@@ -116,7 +130,7 @@ class CC2652Flasher : public Component {
     want_update_ = false;
     run_update_();
   }
-  float get_setup_priority() const override { return setup_priority::HARDWARE; }
+  float get_setup_priority() const override { return setup_priority::HARDWARE - 3.0f; }
 
  private:
   // ---------- helpers ----------
@@ -199,6 +213,7 @@ class CC2652Flasher : public Component {
   }
 
  bool fetch_manifest_(const std::string &url, std::string &fw_url_out){
+    manifest_baudrate_ = 0;
     esp_http_client_handle_t client;
     if(!http_open_(url, client)) return false;
 
@@ -217,6 +232,7 @@ class CC2652Flasher : public Component {
     // Reset previously parsed fields
     fw_url_out.clear(); expected_md5_.clear(); expected_size_ = 0; manifest_version_.clear();
 
+    JsonVariantConst selected_image = doc.as<JsonVariantConst>();
     // Helper to extract URL/md5/size/version from a JsonVariant
     auto extract_fields = [&](JsonVariantConst v)->bool{
       if (v.isNull()) return false;
@@ -224,6 +240,7 @@ class CC2652Flasher : public Component {
       else if (v["firmware_url"].is<const char*>()) fw_url_out = v["firmware_url"].as<const char*>();
       else if (v["url"].is<const char*>()) fw_url_out = v["url"].as<const char*>();
       else return false;
+      selected_image = v;
       // Optional metadata
       if (v["md5"].is<const char*>()) expected_md5_ = v["md5"].as<const char*>();
       else if (v["md5sum"].is<const char*>()) expected_md5_ = v["md5sum"].as<const char*>();
@@ -354,6 +371,12 @@ class CC2652Flasher : public Component {
         ESP_LOGW(TAG, "Manifest points to an Intel HEX file. Flasher will stream & parse HEX directly.");
       }
     }
+    if (!zigbee_firmware_baud::read_baud(selected_image, doc.as<JsonVariantConst>(), manifest_baudrate_) ||
+        (manifest_baudrate_ != 0 && !application_baud_.supports(manifest_baudrate_))) {
+      ESP_LOGE(TAG, "Invalid or unsupported manifest baudrate; expected a supported integer application baud");
+      return false;
+    }
+    if (manifest_baudrate_ != 0) ESP_LOGI(TAG, "Manifest application baudrate=%u", unsigned(manifest_baudrate_));
     if (!expected_md5_.empty()) ESP_LOGI(TAG, "Manifest MD5=%s", expected_md5_.c_str());
     if (expected_size_) ESP_LOGI(TAG, "Manifest size=%u", (unsigned)expected_size_);
     if (!manifest_version_.empty()) ESP_LOGI(TAG, "Manifest version=%s", manifest_version_.c_str());
@@ -927,7 +950,9 @@ class CC2652Flasher : public Component {
     }
     return false;
   }
-  void update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){ if(!show_progress_) return; if(expected>0){ uint32_t pc=(uint64_t)total*100/expected; if(pc>=last_pc+progress_step_){ last_pc=pc-(pc%progress_step_); ESP_LOGI(TAG,"Progress: %u%% (%u/%u)",(unsigned)pc,(unsigned)total,(unsigned)expected);} } else { if(total/65536>last_pc){ last_pc=total/65536; ESP_LOGI(TAG,"Progress: %u bytes",(unsigned)total);} } }
+  void update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){
+    if (expected > 0) flash_status_.advance(static_cast<int>((uint64_t) total * 100 / expected));
+ if(!show_progress_) return; if(expected>0){ uint32_t pc=(uint64_t)total*100/expected; if(pc>=last_pc+progress_step_){ last_pc=pc-(pc%progress_step_); ESP_LOGI(TAG,"Progress: %u%% (%u/%u)",(unsigned)pc,(unsigned)total,(unsigned)expected);} } else { if(total/65536>last_pc){ last_pc=total/65536; ESP_LOGI(TAG,"Progress: %u bytes",(unsigned)total);} } }
 
   // Probe only the ZNP product field (from SYS_VERSION) and publish variant text if configured
   void probe_znp_product_(){
@@ -1022,7 +1047,7 @@ class CC2652Flasher : public Component {
     return true;
   }
   void leave_bootloader_(){ rst_sw_->turn_on(); delay_(20); rst_sw_->turn_off(); delay_(20); }
-  void restore_baud_(){ if (restore_baud_rate_>0){ ESP_LOGD(TAG,"Restoring UART baud: %u", restore_baud_rate_); uart_->set_baud_rate(restore_baud_rate_);} }
+  void restore_baud_(){ if (restore_baud_rate_>0){ ESP_LOGD(TAG,"Restoring UART baud: %u", restore_baud_rate_); uart_->set_baud_rate(restore_baud_rate_); uart_->load_settings(false);} }
 
   bool bsl_autobaud_(uint32_t timeout_ms=800){
     for (int attempt=0; attempt<3; ++attempt){
@@ -1052,7 +1077,7 @@ class CC2652Flasher : public Component {
   bool detect_variant_via_bsl_(){
     bool ok_all = false;
     uint32_t dev=0, usr=0, flsz=0; uint16_t cid=0;
-    if (boot_baud_ > 0) { uart_->set_baud_rate(boot_baud_); }
+    if (boot_baud_ > 0) { uart_->set_baud_rate(boot_baud_); uart_->load_settings(false); }
     if(!enter_bootloader_()) { ESP_LOGE(TAG, "BSL probe: failed to enter bootloader"); restore_baud_(); return false; }
     if(!bsl_autobaud_(1200)) { ESP_LOGE(TAG, "BSL probe: autobaud failed"); leave_bootloader_(); restore_baud_(); return false; }
     delay_(15); flush_uart_();
@@ -1086,7 +1111,7 @@ class CC2652Flasher : public Component {
     ESP_LOGI(TAG,"Starting erase-only flow (mode=%u)…", (unsigned)mode);
     if (!uart_ || !bsl_sw_ || !rst_sw_){ ESP_LOGE(TAG,"Not configured (uart/switches)."); return; }
 
-    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %u", boot_baud_); uart_->set_baud_rate(boot_baud_); }
+    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %u", boot_baud_); uart_->set_baud_rate(boot_baud_); uart_->load_settings(false); }
     if(!enter_bootloader_()){ ESP_LOGE(TAG,"Failed to enter bootloader."); restore_baud_(); return; }
     if(!bsl_autobaud_(1200)){ ESP_LOGE(TAG,"Auto-baud failed."); leave_bootloader_(); restore_baud_(); return; }
     delay_(20); flush_uart_();
@@ -1116,6 +1141,7 @@ class CC2652Flasher : public Component {
   }
 
   void run_update_(){
+    zigbee_firmware_baud::FlashAttempt attempt(flash_status_);
     ESP_LOGI(TAG,"Starting firmware update…");
     if (manifest_url_.empty() || !uart_ || !bsl_sw_ || !rst_sw_){
       ESP_LOGE(TAG,"Not configured (url/uart/switches)."); return;
@@ -1143,7 +1169,7 @@ class CC2652Flasher : public Component {
     erased_pages_.clear();
     bank_erased_all_ = false;
 
-    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %u", boot_baud_); uart_->set_baud_rate(boot_baud_); }
+    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %u", boot_baud_); uart_->set_baud_rate(boot_baud_); uart_->load_settings(false); }
 
     if(!enter_bootloader_()){ ESP_LOGE(TAG,"Failed to enter bootloader."); restore_baud_(); return; }
     if(!bsl_autobaud_()){   ESP_LOGE(TAG,"Auto-baud failed.");   leave_bootloader_(); restore_baud_(); return; }
@@ -1167,7 +1193,7 @@ class CC2652Flasher : public Component {
     }
 
     if(ok){
-      ESP_LOGI(TAG,"Update finished OK. Resetting target…");
+      ESP_LOGI(TAG,"Transfer verified. Resetting target…");
       bsl_send_simple_(CMD_RESET, 1000);
       // Re-publish known variant so logs/UI don't show "unknown" from ZNP probe
       if (variant_text_) {
@@ -1180,13 +1206,21 @@ class CC2652Flasher : public Component {
     }
 
     leave_bootloader_();
+    if (ok && manifest_baudrate_ != 0) restore_baud_rate_ = manifest_baudrate_;
     restore_baud_();
+    if (ok && manifest_baudrate_ != 0 && !application_baud_.commit(manifest_baudrate_)) {
+      ESP_LOGE(TAG, "Radio transfer succeeded but saving the application baud failed");
+      ok = false;
+    }
 
+    // Report completion only after the application UART and saved baud are ready.
+    if (ok) ESP_LOGI(TAG,"Update finished OK. Application UART baud ready.");
     // After restoring normal UART, query ZNP info to refresh sensors without reboot
     if (ok) {
       this->set_timeout(1200, [this](){ this->query_znp_info_(); });
       this->set_timeout(4000, [this](){ this->query_znp_info_(); });
     }
+    if (ok) attempt.succeed();
   }
 
   void run_check_update_(){
@@ -1272,6 +1306,9 @@ class CC2652Flasher : public Component {
   uint8_t znp_product_{0xFF};  // captured from SYS_VERSION [product]
   bool detect_on_boot_{true};
   uint16_t detect_on_boot_delay_ms_{0};
+  zigbee_firmware_baud::RuntimeBaud application_baud_;
+  zigbee_firmware_baud::FlashStatus flash_status_;
+  uint32_t manifest_baudrate_{0};
 };
 
 } // namespace cc2652_flasher
