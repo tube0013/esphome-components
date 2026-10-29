@@ -1,10 +1,10 @@
 name: Native radio flasher tests
 on:
   pull_request:
-    paths: ['components/cc2652_flasher/**', 'components/efr32_flasher/**', 'components/efr32_info/**', 'components/zigbee_firmware_baud/**', 'tests/**', '.github/workflows/radio-flashers.yml']
+    paths: ['components/**', 'tests/**', '.github/workflows/radio-flashers.yml']
   push:
     branches: [main, 'codex/**']
-    paths: ['components/cc2652_flasher/**', 'components/efr32_flasher/**', 'components/efr32_info/**', 'components/zigbee_firmware_baud/**', 'tests/**', '.github/workflows/radio-flashers.yml']
+    paths: ['components/**', 'tests/**', '.github/workflows/radio-flashers.yml']
 permissions:
   contents: read
 jobs:
