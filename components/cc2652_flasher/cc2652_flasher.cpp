@@ -1,5 +1,6 @@
 #include "esphome/components/zigbee_firmware_baud/manifest_baud.h"
 #include "esphome/components/zigbee_firmware_baud/runtime_baud.h"
+#include "esphome/components/zigbee_firmware_baud/flash_status.h"
 
 // ====== CC2652 Flasher (external component) ======
 #include <vector>
@@ -66,6 +67,8 @@ class CC2652Flasher : public Component {
   void set_runtime_baud_rate(uint32_t b){ restore_baud_rate_ = b; application_baud_.manual(b); }
   void set_baud_preference_hash(uint32_t hash){ application_baud_.set_preference_hash(hash); }
   void set_runtime_baud_select(select::Select *value){ application_baud_.set_selector(value); }
+  const zigbee_firmware_baud::FlashStatus &get_flash_status() const { return flash_status_; }
+  void set_flash_listener(std::function<void(const zigbee_firmware_baud::FlashStatus &)> listener) { flash_status_.listener = std::move(listener); }
   bool is_applying_manifest_baud() const { return application_baud_.applying_manifest(); }
   void set_erase_mode(uint8_t m){ erase_mode_ = m; }  // 0=sector,1=bank,2=auto
   void set_verbose(bool v){ verbose_ = v; }
@@ -945,7 +948,9 @@ class CC2652Flasher : public Component {
     }
     return false;
   }
-  void update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){ if(!show_progress_) return; if(expected>0){ uint32_t pc=(uint64_t)total*100/expected; if(pc>=last_pc+progress_step_){ last_pc=pc-(pc%progress_step_); ESP_LOGI(TAG,"Progress: %u%% (%u/%u)",(unsigned)pc,(unsigned)total,(unsigned)expected);} } else { if(total/65536>last_pc){ last_pc=total/65536; ESP_LOGI(TAG,"Progress: %u bytes",(unsigned)total);} } }
+  void update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){
+    if (expected > 0) flash_status_.advance(static_cast<int>((uint64_t) total * 100 / expected));
+ if(!show_progress_) return; if(expected>0){ uint32_t pc=(uint64_t)total*100/expected; if(pc>=last_pc+progress_step_){ last_pc=pc-(pc%progress_step_); ESP_LOGI(TAG,"Progress: %u%% (%u/%u)",(unsigned)pc,(unsigned)total,(unsigned)expected);} } else { if(total/65536>last_pc){ last_pc=total/65536; ESP_LOGI(TAG,"Progress: %u bytes",(unsigned)total);} } }
 
   // Probe only the ZNP product field (from SYS_VERSION) and publish variant text if configured
   void probe_znp_product_(){
@@ -1134,6 +1139,7 @@ class CC2652Flasher : public Component {
   }
 
   void run_update_(){
+    zigbee_firmware_baud::FlashAttempt attempt(flash_status_);
     ESP_LOGI(TAG,"Starting firmware update…");
     if (manifest_url_.empty() || !uart_ || !bsl_sw_ || !rst_sw_){
       ESP_LOGE(TAG,"Not configured (url/uart/switches)."); return;
@@ -1212,6 +1218,7 @@ class CC2652Flasher : public Component {
       this->set_timeout(1200, [this](){ this->query_znp_info_(); });
       this->set_timeout(4000, [this](){ this->query_znp_info_(); });
     }
+    if (ok) attempt.succeed();
   }
 
   void run_check_update_(){
@@ -1298,6 +1305,7 @@ class CC2652Flasher : public Component {
   bool detect_on_boot_{true};
   uint16_t detect_on_boot_delay_ms_{0};
   zigbee_firmware_baud::RuntimeBaud application_baud_;
+  zigbee_firmware_baud::FlashStatus flash_status_;
   uint32_t manifest_baudrate_{0};
 };
 

@@ -13,6 +13,16 @@ std::string TubesZBWeb::radio_source_key_() const {
 }
 
 void TubesZBWeb::setup_radio_() {
+  radio_flasher_->set_flash_listener([this](const zigbee_firmware_baud::FlashStatus &status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    cc_started_ = false;
+    radio_.operation = "flash";
+    radio_.result = status.result; radio_.progress = status.progress;
+    radio_.busy = status.result == 1;
+    radio_command_at_ = millis();
+    radio_.status = status.result == 1 ? "Zigbee flash in progress" :
+                    status.result == 2 ? "Zigbee firmware flash complete" : "Zigbee firmware flash failed; open device logs";
+  });
   auto bind = [this](text_sensor::TextSensor *sensor, std::string RadioState::*field) {
     sensor->add_on_state_callback([this, field](const std::string &value) {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -50,13 +60,17 @@ void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *message,
   const auto event = decode_cc2652_log(line);
   using E = CC2652LogEvent;
   std::lock_guard<std::mutex> lock(mutex_);
+  if (radio_flasher_->get_flash_status().result == 1 || event.kind == E::FLASH_START ||
+      event.kind == E::FLASH_OK || event.kind == E::PROGRESS) return;  // Native listener owns flash results.
   if (event.kind == E::CHECK_START || event.kind == E::FLASH_START || event.kind == E::PROBE_START || event.kind == E::BOOTLOADER_START) {
     radio_.operation = event.kind == E::CHECK_START ? "check" : event.kind == E::FLASH_START ? "flash" : event.kind == E::PROBE_START ? "probe" : "bootloader";
     radio_.result = 1; radio_.busy = true; radio_.progress = -1; radio_command_at_ = millis();
     radio_.status = "CC2652 operation in progress";
     cc_started_ = event.kind != E::BOOTLOADER_START;
     cc_failed_ = cc_fresh_latest_ = cc_flash_ok_ = cc_probe_ok_ = false;
-    if (event.kind == E::CHECK_START) {
+    if (radio_flasher_->get_flash_status().result == 1 || event.kind == E::FLASH_START ||
+      event.kind == E::FLASH_OK || event.kind == E::PROGRESS) return;  // Native listener owns flash results.
+  if (event.kind == E::CHECK_START) {
       radio_.checked = false; radio_checked_key_.clear(); radio_requested_key_ = radio_source_key_();
     }
   }

@@ -51,7 +51,12 @@ class RuntimeBaud {
     return persist_();
   }
  private:
-  bool persist_() { return preference_.save(&current_) && global_preferences->sync(); }
+  bool persist_() {
+    for (unsigned attempt = 0; attempt < 3; ++attempt) {
+      if (preference_.save(&current_) && global_preferences->sync()) return true;
+    }
+    return false;
+  }
   ESPPreferenceObject preference_;
   select::Select *selector_{nullptr};
   uint32_t preference_hash_{0}, current_{0};

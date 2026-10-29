@@ -45,6 +45,7 @@ bool NetworkSettings::set_use_without_internet_(bool value) {
     ESP_LOGW(TAG, "Wait for network/firmware operations before changing internet use");
     return false;
   }
+  const bool was_offline = use_without_internet();
   bool ok = internet_policy_.set(value, [](bool offline) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open("tzb_network", NVS_READWRITE, &handle);
@@ -56,6 +57,7 @@ bool NetworkSettings::set_use_without_internet_(bool value) {
     if (err != ESP_OK) ESP_LOGE(TAG, "Cannot save internet use: %s", esp_err_to_name(err));
     return err == ESP_OK;
   });
+  if (ok && was_offline && !value) internet_enabled_pending_ = true;
   if (ok) ESP_LOGI(TAG, "Use without internet: %s (saved)", value ? "ON" : "OFF");
   return ok;
 }
@@ -116,7 +118,7 @@ void NetworkSettings::queue_restart_() {
 }
 
 void NetworkSettings::loop() {
-  bool restart = false;
+  bool restart = false, internet_enabled = false;
   {
     // HTTP handlers run on the IDF HTTP task, not ESPHome's main loop.
     std::lock_guard<std::mutex> lock(mutex_);
@@ -127,8 +129,11 @@ void NetworkSettings::loop() {
       // settings on the next boot. Do not leave an unreachable trial running.
       queue_restart_();
     }
+    internet_enabled = internet_enabled_pending_ && internet_allowed();
+    internet_enabled_pending_ = false;
     restart = restart_pending_ && int32_t(millis() - restart_at_) >= 0;
   }
+  if (internet_enabled) internet_enabled_trigger_.trigger();
   if (restart)
     App.safe_reboot();
 }

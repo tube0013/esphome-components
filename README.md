@@ -13,3 +13,17 @@ Existing `stream_server` and `efr32_info` provide serial transport and identity.
 See individual component READMEs and [radio behavior](docs/radio-flashing.md).
 The paired builder PR runs its integration, browser and firmware checks against
 this repository; its source reference temporarily targets this PR's head.
+
+Minimum ESPHome version: **2026.10.1** (the frontend uses the public update source URL API).
+
+Component host tests live here, including network transactions, IPv4 JavaScript/C++
+parity, transport policy, web assets, baud persistence, and native radio protocols.
+Run `python -m pytest -q tests` with ESPHome 2026.10.1, pytest, Node.js and
+`ARDUINOJSON_INCLUDE` pointing at ArduinoJson 7.4.3's `src`. The Builder keeps
+hardware configuration and browser integration tests; it runs this same suite
+from its external checkout instead of maintaining duplicate native fixtures.
+
+The Origin and per-boot UI nonce checks protect against accidental cross-site
+mutations; they do not authenticate LAN clients or prevent DNS rebinding.
+Configure ESPHome `web_server.auth` when access control is required. The shared
+server applies that authentication to both management interfaces.

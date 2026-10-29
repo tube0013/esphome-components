@@ -2,6 +2,7 @@
 #pragma once
 
 #include "esphome/components/zigbee_firmware_baud/runtime_baud.h"
+#include "esphome/components/zigbee_firmware_baud/flash_status.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -42,6 +43,8 @@ class EFR32Flasher : public Component {
   void set_runtime_baud_rate(uint32_t baud){ runtime_baud_rate_ = baud; application_baud_.manual(baud); }
   void set_baud_preference_hash(uint32_t hash){ application_baud_.set_preference_hash(hash); }
   void set_runtime_baud_select(select::Select *value){ application_baud_.set_selector(value); }
+  const zigbee_firmware_baud::FlashStatus &get_flash_status() const { return flash_status_; }
+  void set_flash_listener(std::function<void(const zigbee_firmware_baud::FlashStatus &)> listener) { flash_status_.listener = std::move(listener); }
   bool is_applying_manifest_baud() const { return application_baud_.applying_manifest(); }
   void set_bootloader_baud_rate(uint32_t baud){ bootloader_baud_rate_ = baud; }
   void set_fw_text_sensor(esphome::text_sensor::TextSensor *t){ fw_text_ = t; }
@@ -137,6 +140,7 @@ class EFR32Flasher : public Component {
   uint8_t variant_force_{0};
   std::string variant_key_override_{};
   zigbee_firmware_baud::RuntimeBaud application_baud_;
+  zigbee_firmware_baud::FlashStatus flash_status_;
   uint32_t manifest_baudrate_{0};
 };
 

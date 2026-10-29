@@ -149,6 +149,13 @@ async def to_code(config):
         model = "TubesZB Dual Radio MGM21 + Z-Wave" if "zwave_uart_id" in config else "TubesZB MGM210"
         for key, value in config["serial_radio"].items():
             cg.add(getattr(var, "set_" + key)(value if key == "radio_model" else await cg.get_variable(value)))
+    if "zigbee" in config or "cc2652" in config:
+        key = "efr32_flasher" if "zigbee" in config else "cc2652_flasher"
+        flashers = CORE.config[key]
+        if isinstance(flashers, dict):
+            flashers = [flashers]
+        flasher = next(f for f in flashers if str(f["uart_id"]) == str(config["uart_id"]))
+        cg.add(var.set_radio_flasher(await cg.get_variable(flasher[CONF_ID])))
     if "zwave_uart_id" in config:
         cg.add_define("USE_TUBESZB_DUAL_RADIO")
         cg.add(var.set_zwave_uart(await cg.get_variable(config["zwave_uart_id"])))

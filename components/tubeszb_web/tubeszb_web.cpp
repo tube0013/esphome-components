@@ -54,6 +54,7 @@ void TubesZBWeb::setup() {
 void TubesZBWeb::on_ota_global_state(ota::OTAState state, float progress, uint8_t error, ota::OTAComponent *) {
   // OTA callbacks keep HTTP progress current while the download blocks the main loop.
   std::lock_guard<std::mutex> lock(mutex_);
+  gateway_start_.clear();
   switch (state) {
     case ota::OTA_STARTED:
       gateway_ota_state_ = 1; gateway_ota_progress_ = 0.0f; gateway_ota_error_ = 0; break;
@@ -104,11 +105,38 @@ void TubesZBWeb::loop() {
   } else if (command == Command::CHECK) {
     check_gateway_update();
   } else if (command == Command::INSTALL) {
-    if (settings_->internet_allowed()) update_->perform(false);
+    // Revalidate on the main loop; the HTTP snapshot may be stale.
+    if (settings_->internet_allowed() && update_->state == update::UPDATE_STATE_AVAILABLE &&
+        valid_ota_url(update_->update_info.firmware_url)) {
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        gateway_start_.arm(millis());
+      }
+      update_->perform(false);
+    } else {
+      std::lock_guard<std::mutex> lock(mutex_);
+      gateway_ota_state_ = 3; gateway_ota_progress_ = -1.0f;
+      gateway_ota_error_ = http_request::OTA_BAD_URL;
+    }
   }
 #ifdef USE_TUBESZB_ZIGBEE
   else if (command != Command::NONE) run_radio_command_(command, value);
 #endif
+  bool missing_ota_start = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    missing_ota_start = gateway_start_.expired(millis());
+    if (missing_ota_start) {
+      gateway_start_.clear(); gateway_ota_state_ = 3; gateway_ota_progress_ = -1.0f;
+      gateway_ota_error_ = http_request::OTA_BAD_URL;
+    }
+  }
+  if (missing_ota_start) {
+    // perform() may publish INSTALLING although flash() never emits OTA_STARTED.
+    // Report the failed start to the update entity as well, releasing both guards.
+    update_->on_ota_state(ota::OTA_ERROR, 0.0f, http_request::OTA_BAD_URL);
+    ESP_LOGE(TAG, "Gateway firmware installation did not start; controls unlocked");
+  }
   if (checking_ && (update_->status_has_error() || uint32_t(millis() - check_started_) >= 30000)) {
     check_timeout_ = !update_->status_has_error();
     checking_ = false;
@@ -143,7 +171,7 @@ void TubesZBWeb::loop() {
   {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_ = std::move(next);
-    action_pending_ = restart_pending_;
+    action_pending_ = restart_pending_ || gateway_start_.pending();
   }
 }
 
@@ -305,7 +333,7 @@ void TubesZBWeb::handleRequest(AsyncWebServerRequest *request) {
       reject(409, "Check for a valid firmware update before installing.");
       return;
     }
-    gateway_ota_state_ = 1; gateway_ota_progress_ = -1.0f; gateway_ota_error_ = 0;
+    gateway_ota_state_ = 0; gateway_ota_progress_ = -1.0f; gateway_ota_error_ = 0;
     command_ = Command::INSTALL;
 #ifdef USE_TUBESZB_ZIGBEE
   } else if (url == "/tubeszb/zigbee-action") {

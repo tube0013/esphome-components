@@ -1,4 +1,4 @@
-name: Native radio flasher tests
+name: Component host tests
 on:
   pull_request:
     paths: ['components/**', 'tests/**', '.github/workflows/radio-flashers.yml']
@@ -15,10 +15,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m pip install pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install esphome==2026.10.1 pytest
       - name: Supply the pinned JSON headers used by the tested ESPHome firmware
         run: git clone --depth 1 --branch v7.4.3 https://github.com/bblanchon/ArduinoJson.git /tmp/arduinojson
-      - name: Check baud persistence, selected-image metadata and ASH/EZSP transport
+      - name: Check network transactions, web policy, native radio transport and saved baud
         env:
           ARDUINOJSON_INCLUDE: /tmp/arduinojson/src
         run: python -m pytest -q tests

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/automation.h"
 #include "esphome/components/ethernet/ethernet_component.h"
 #include "esphome/components/web_server_base/web_server_base.h"
 #include "trial_state.h"
 #include "guarded_http.h"
+#include "single_flight.h"
 #include "esphome/components/http_request/update/http_request_update.h"
 #include <mutex>
 #include <functional>
@@ -19,7 +21,10 @@ class NetworkSettings : public Component, public AsyncWebHandler {
   void set_update(http_request::HttpRequestUpdate *update) { update_ = update; }
   bool internet_allowed() const { return internet_policy_.allowed(); }
   bool use_without_internet() const { return internet_policy_.offline(); }
+  bool begin_connectivity_check() { return connectivity_check_.begin(); }
+  void end_connectivity_check() { connectivity_check_.end(); }
   bool set_use_without_internet(bool value);
+  Trigger<> *get_internet_enabled_trigger() { return &internet_enabled_trigger_; }
   void set_ethernet(ethernet::EthernetComponent *ethernet) { ethernet_ = ethernet; }
   void set_web_server_base(web_server_base::WebServerBase *base) { base_ = base; }
   float get_setup_priority() const override { return setup_priority::ETHERNET + 1.0f; }
@@ -47,7 +52,10 @@ class NetworkSettings : public Component, public AsyncWebHandler {
 
   ethernet::EthernetComponent *ethernet_{nullptr};
   web_server_base::WebServerBase *base_{nullptr};
+  SingleFlight connectivity_check_;
   InternetPolicy internet_policy_;
+  Trigger<> internet_enabled_trigger_;
+  bool internet_enabled_pending_{false};
   GuardedHttp guarded_http_;
   http_request::HttpRequestComponent *http_request_{nullptr};
   http_request::HttpRequestUpdate *update_{nullptr};

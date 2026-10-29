@@ -481,12 +481,15 @@ bool EFR32Flasher::xmodem_send_(esp_http_client_handle_t client, uint32_t conten
 }
 
 void EFR32Flasher::update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){
+  if (expected > 0) flash_status_.advance(static_cast<int>((uint64_t) total * 100 / expected));
+
   if(!show_progress_) return;
   if(expected>0){ uint32_t pc=(uint64_t)total*100/expected; if(pc>=last_pc+progress_step_){ last_pc=pc-(pc%progress_step_); ESP_LOGI(TAG,"Progress: %u%% (%u/%u)",(unsigned)pc,(unsigned)total,(unsigned)expected);} }
   else { if(total/65536>last_pc){ last_pc=total/65536; ESP_LOGI(TAG,"Progress: %u bytes",(unsigned)total);} }
 }
 
 void EFR32Flasher::run_update_(){
+  zigbee_firmware_baud::FlashAttempt attempt(flash_status_);
   // A direct GBL must not inherit baud/integrity metadata from an earlier check.
   manifest_baudrate_ = 0; expected_md5_.clear(); expected_size_ = 0;
   if (!bootloader_ready_) apply_runtime_baud_();
@@ -557,6 +560,7 @@ void EFR32Flasher::run_update_(){
     ESP_LOGE(TAG, "EFR32 update failed");
   }
   set_busy_(false);
+  if (ok) attempt.succeed();
 }
 
 void EFR32Flasher::run_check_update_(){

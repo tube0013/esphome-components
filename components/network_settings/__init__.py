@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from esphome import automation
 import esphome.codegen as cg
 import esphome.config_validation as cv
 import esphome.final_validate as fv
@@ -20,6 +21,7 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema({
         cv.GenerateID(): cv.declare_id(NetworkSettings),
         cv.GenerateID("http_request_id"): cv.use_id(http_request.HttpRequestComponent),
+        cv.Optional("on_internet_enabled"): automation.validate_automation(single=True),
         cv.Required("firmware_update_id"): cv.use_id(HttpRequestUpdate),
         cv.Required("ethernet_id"): cv.use_id(ethernet.EthernetComponent),
         cv.GenerateID(CONF_WEB_SERVER_BASE_ID): cv.use_id(web_server_base.WebServerBase),
@@ -48,6 +50,8 @@ async def to_code(config):
     cg.add(var.set_web_server_base(await cg.get_variable(config[CONF_WEB_SERVER_BASE_ID])))
     cg.add(var.set_http_request(await cg.get_variable(config["http_request_id"])))
     cg.add(var.set_update(await cg.get_variable(config["firmware_update_id"])))
+    if "on_internet_enabled" in config:
+        await automation.build_automation(var.get_internet_enabled_trigger(), [], config["on_internet_enabled"])
     # Keep ESPHome's own static-IP path compiled in, even though DHCP is the
     # factory default. The saved static settings are assigned before Ethernet setup.
     cg.add_define("USE_ETHERNET_MANUAL_IP")

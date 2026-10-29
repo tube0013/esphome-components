@@ -13,6 +13,15 @@ std::string TubesZBWeb::radio_source_key_() const {
 }
 
 void TubesZBWeb::setup_radio_() {
+  radio_flasher_->set_flash_listener([this](const zigbee_firmware_baud::FlashStatus &status) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    radio_.operation = "flash";
+    radio_.result = status.result; radio_.progress = status.progress;
+    radio_.busy = status.result == 1;
+    radio_command_at_ = millis();
+    radio_.status = status.result == 1 ? "Zigbee flash in progress" :
+                    status.result == 2 ? "Zigbee firmware flash complete" : "Zigbee firmware flash failed; open device logs";
+  });
   busy_->add_on_state_callback([this](bool busy) {
     std::lock_guard<std::mutex> lock(mutex_);
     radio_.busy = busy;
@@ -57,22 +66,8 @@ void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *message,
     return;
   const std::string line(message, std::min(length, size_t(512)));
   std::lock_guard<std::mutex> lock(mutex_);
-  if (line.find("run_update start") != std::string::npos) {
-    radio_.operation = "flash"; radio_.result = 1; radio_.progress = -1;
-  }
-  const auto pos = line.find("Progress: ");
-  if (pos != std::string::npos) {
-    char *end = nullptr;
-    const unsigned long progress = strtoul(line.c_str() + pos + 10, &end, 10);
-    if (end != nullptr && *end == '%' && progress <= 100)
-      radio_.progress = static_cast<int>(progress);
-  }
-  if (line.find("EFR32 update finished OK") != std::string::npos) {
-    radio_.result = 2; radio_.progress = 100;
-  } else if ((level <= ESPHOME_LOG_LEVEL_ERROR && radio_.result == 1) ||
-             line.find("run_update finished ok=0") != std::string::npos || line.find("EFR32 update failed") != std::string::npos) {
+  if (radio_.operation != "flash" && level <= ESPHOME_LOG_LEVEL_ERROR && radio_.result == 1)
     radio_.result = 3;
-  }
 }
 
 void TubesZBWeb::run_radio_command_(Command command, const std::string &value) {
@@ -133,6 +128,10 @@ void TubesZBWeb::sample_radio_() {
   if (radio_.result == 1 && !radio_.busy && radio_.operation != "flash" && uint32_t(millis()-radio_command_at_) > 1000) {
     radio_.result = 2;
     if (radio_.operation == "check" && radio_requested_key_ == radio_source_key_()) radio_checked_key_ = radio_requested_key_;
+  }
+  if (radio_.result == 1 && !radio_.busy && radio_.operation == "flash" && uint32_t(millis()-radio_command_at_) >= 35000) {
+    radio_.result = 3;
+    radio_.status = "Zigbee flash did not start; open device logs and try again";
   }
   radio_.checked = !radio_checked_key_.empty() && radio_checked_key_ == radio_source_key_();
 }

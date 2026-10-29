@@ -1,4 +1,5 @@
 #pragma once
+#include "operation_start.h"
 
 #include "esphome/core/component.h"
 #include "esphome/components/ethernet/ethernet_component.h"
@@ -18,7 +19,11 @@
 #include "esphome/components/select/select.h"
 #endif
 #include "esphome/components/switch/switch.h"
+#ifdef USE_TUBESZB_CC2652
+#include "esphome/components/cc2652_flasher/cc2652_flasher.h"
+#endif
 #ifdef USE_TUBESZB_EFR32
+#include "esphome/components/efr32_flasher/efr32_flasher.h"
 #include "esphome/components/text/text.h"
 #endif
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -62,6 +67,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   TZB_BUTTON_BINDING(bootloader)
 #undef TZB_BUTTON_BINDING
 #ifdef USE_TUBESZB_CC2652
+  void set_radio_flasher(cc2652_flasher::CC2652Flasher *value) { radio_flasher_ = value; }
   void set_flash_script(script::Script<> *value) { cc_flash_script_ = value; }
   void set_boot_probe_script(script::Script<> *value) { cc_boot_probe_script_ = value; }
 #endif
@@ -72,6 +78,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   void set_gateway_beta_switch(switch_::Switch *value) { gateway_beta_ = value; }
   void set_zigbee_beta_switch(switch_::Switch *value) { zigbee_beta_ = value; }
 #ifdef USE_TUBESZB_EFR32
+  void set_radio_flasher(efr32_flasher::EFR32Flasher *value) { radio_flasher_ = value; }
   void set_bootloader_script(script::Script<> *value) { bootloader_script_ = value; }
   void set_custom_url_text(text::Text *value) { custom_url_ = value; }
 #endif
@@ -122,6 +129,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
                  *pause_button_{nullptr}, *resume_button_{nullptr}, *bootloader_button_{nullptr};
   switch_::Switch *gateway_beta_{nullptr}, *zigbee_beta_{nullptr};
   #ifdef USE_TUBESZB_EFR32
+  efr32_flasher::EFR32Flasher *radio_flasher_{nullptr};
   script::Script<> *bootloader_script_{nullptr};
   text::Text *custom_url_{nullptr};
   #endif
@@ -134,6 +142,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   std::string radio_requested_key_;
   std::string radio_source_key_() const;
 #ifdef USE_TUBESZB_CC2652
+  cc2652_flasher::CC2652Flasher *radio_flasher_{nullptr};
   script::Script<> *cc_flash_script_{nullptr}, *cc_boot_probe_script_{nullptr};
   bool cc_started_{false}, cc_failed_{false}, cc_fresh_latest_{false}, cc_flash_ok_{false}, cc_probe_ok_{false};
   void queue_cc2652_automatic_(Command command);
@@ -152,6 +161,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   std::string check_source_, verified_source_;
   Command command_{Command::NONE};
   std::string command_value_;
+  PendingStart gateway_start_;
   bool action_pending_{false};  // Protected by mutex_, including the main-loop handoff.
   uint8_t gateway_ota_state_{0}, gateway_ota_error_{0};  // 0=idle, 1=installing, 2=verified, 3=failed/aborted
   float gateway_ota_progress_{-1.0f};

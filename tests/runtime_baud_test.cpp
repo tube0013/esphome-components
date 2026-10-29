@@ -25,6 +25,10 @@ int main() {
   RuntimeBaud reordered; reordered.set_preference_hash(456); reordered.set_selector(&selector);
   selector.callback = [&] { assert(reordered.applying_manifest()); };
   reordered.setup(115200); assert(reordered.current() == 921600 && selector.value == "921600");
+  save_failures = 1; assert(first.commit(230400)); assert(saved.at(123) == 230400);
+  sync_failures = 2; assert(first.commit(460800)); assert(saved.at(123) == 460800);
+  RuntimeBaud retried; retried.set_preference_hash(123); retried.setup(115200);
+  assert(retried.current() == 460800);
   sync_ok = false;
   assert(!first.commit(115200)); assert(first.current() == 115200);
   sync_ok = true; save_ok = false;
