@@ -12,9 +12,9 @@ void TubesZBWeb::setup_radio_() {
   this->radio_.selected_baud =
       this->baud_ != nullptr ? this->baud_->current_option() : std::to_string(this->radio_baud_rate_);
   if (this->baud_ != nullptr)
-    this->baud_->add_on_state_callback([this](const std::string &value, size_t) {
+    this->baud_->add_on_state_callback([this](size_t) {
       std::lock_guard<std::mutex> lock(this->mutex_);
-      this->radio_.selected_baud = value;
+      this->radio_.selected_baud = this->baud_->current_option();
     });
 }
 void TubesZBWeb::run_radio_command_(Command command, const std::string &value) {

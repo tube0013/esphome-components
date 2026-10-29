@@ -76,9 +76,9 @@ void TubesZBWeb::setup_radio_() {
       this->refresh_radio_source_key_();
     }
   });
-  this->baud_->add_on_state_callback([this](const std::string &value, size_t) {
+  this->baud_->add_on_state_callback([this](size_t) {
     std::lock_guard<std::mutex> lock(this->mutex_);
-    this->radio_.selected_baud = value;
+    this->radio_.selected_baud = this->baud_->current_option();
   });
   this->gateway_beta_->add_on_state_callback([this](bool value) {
     std::lock_guard<std::mutex> lock(this->mutex_);
