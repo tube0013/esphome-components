@@ -31,3 +31,9 @@ The Component host tests workflow has an esphome_version manual input for upgrad
 candidates; its default remains 2026.10.1. Before moving the Builder release pins,
 also run Builder firmware compilation and offline-mode hardware acceptance against
 that candidate. A host header check alone cannot establish runtime compatibility.
+
+The select callback contract is also checked against the installed ESPHome headers:
+2026.10.1 publishes a size_t option index, and baud-label caches update from the
+selector's current option only when that callback fires. The Builder also compiles
+a serial-only compatibility fixture to cover the backend that is no longer used by
+its native-flashing production profiles.

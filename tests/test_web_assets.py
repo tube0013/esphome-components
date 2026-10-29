@@ -7,7 +7,7 @@ import importlib.util
 from html.parser import HTMLParser
 ROOT = Path(__file__).resolve().parents[1]
 
-def source_text(relative):
+def source_text(relative: str) -> str:
     # These are binding checks, independent of formatting and explicit member qualification.
     return re.sub(r"\s+", " ", (COMPONENTS_ROOT / relative).read_text().replace("this->", ""))
 
@@ -137,3 +137,13 @@ def test_loop_timing_uses_the_cached_component_tick():
         loop=source.split('void '+cls+'::loop()',1)[1].split('void '+cls+'::dump_config()',1)[0]
         assert 'App.get_loop_component_start_time()' in loop
         assert not re.search(r'\bmillis\(\)',loop)
+
+
+def test_baud_label_callback_matches_installed_select_api() -> None:
+    import esphome
+    select=(Path(esphome.__file__).parent/'components/select/select.h').read_text()
+    assert 'LazyCallbackManager<void(size_t)> state_callback_' in select
+    for name in ('efr32_support.cpp','serial_support.cpp'):
+        source=source_text('tubeszb_web/'+name)
+        assert 'baud_->add_on_state_callback([this](size_t)' in source
+        assert 'radio_.selected_baud = baud_->current_option()' in source
