@@ -1,12 +1,23 @@
+from __future__ import annotations
+
+import zlib
+from typing import Any
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import uart, switch as switch_, text_sensor
-from esphome.const import CONF_ID, CONF_URL
 from esphome.automation import register_action
+from esphome.components import select, socket, text_sensor, uart
+from esphome.components import switch as switch_
+from esphome.const import CONF_ID, CONF_URL
+from esphome.types import ConfigType
+
+CONF_RUNTIME_BAUD_SELECT = "runtime_baud_select"
+CONF_UART_ID = "uart_id"
+
 
 DEPENDENCIES = ["uart", "switch"]
 # Only pull in what we actually need for linking
-AUTO_LOAD = ["md5", "json"]
+AUTO_LOAD = ["md5", "json", "zigbee_firmware_baud", "socket"]
 
 CONF_BSL_SWITCH = "bsl_switch"
 CONF_RST_SWITCH = "rst_switch"
@@ -35,35 +46,47 @@ DetectVariantAction = cc2652_ns.class_("DetectVariantAction")
 
 ERASE_MODE = cv.one_of("sector", "bank", "auto", lower=True)
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(CC2652Flasher),
-        cv.Required(CONF_URL): cv.string_strict,
-        cv.Required("uart_id"): cv.use_id(uart.UARTComponent),
-        cv.Required(CONF_BSL_SWITCH): cv.use_id(switch_.Switch),
-        cv.Required(CONF_RST_SWITCH): cv.use_id(switch_.Switch),
-        cv.Optional(CONF_BOOT_BAUD, default=0): cv.int_range(min=0),
-        cv.Optional(CONF_RESTORE_BAUD, default=0): cv.int_range(min=0),
-        cv.Optional(CONF_ERASE_MODE, default="bank"): ERASE_MODE,
-        cv.Optional(CONF_DEBUG, default=False): cv.boolean,
-        cv.Optional(CONF_SHOW_PROGRESS, default=True): cv.boolean,
-        cv.Optional(CONF_PROGRESS_STEP, default=5): cv.int_range(min=1, max=50),
-        cv.Optional(CONF_FW_VERSION_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_IEEE_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_LATEST_FW_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_VARIANT_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_CHECK_ON_BOOT, default=True): cv.boolean,
-        cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=0, max=60),
-        cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
-        cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
-        # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
-        cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "p2", "p7", "cc2652p2", "cc2652p7", lower=True),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(CC2652Flasher),
+            cv.Required(CONF_URL): cv.string_strict,
+            cv.Required(CONF_UART_ID): cv.use_id(uart.UARTComponent),
+            cv.Optional(CONF_RUNTIME_BAUD_SELECT): cv.use_id(select.Select),
+            cv.Required(CONF_BSL_SWITCH): cv.use_id(switch_.Switch),
+            cv.Required(CONF_RST_SWITCH): cv.use_id(switch_.Switch),
+            cv.Optional(CONF_BOOT_BAUD, default=0): cv.int_range(min=0),
+            cv.Optional(CONF_RESTORE_BAUD, default=0): cv.int_range(min=0),
+            cv.Optional(CONF_ERASE_MODE, default="bank"): ERASE_MODE,
+            cv.Optional(CONF_DEBUG, default=False): cv.boolean,
+            cv.Optional(CONF_SHOW_PROGRESS, default=True): cv.boolean,
+            cv.Optional(CONF_PROGRESS_STEP, default=5): cv.int_range(min=1, max=50),
+            cv.Optional(CONF_FW_VERSION_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_IEEE_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_LATEST_FW_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_VARIANT_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_CHECK_ON_BOOT, default=True): cv.boolean,
+            cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=0, max=60),
+            cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
+            cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
+            # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
+            cv.Optional(CONF_VARIANT, default="auto"): cv.one_of(
+                "auto", "p2", "p7", "cc2652p2", "cc2652p7", lower=True
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    # Manifest and firmware requests are sequential; one outbound connection per flasher.
+    socket.consume_sockets(1, "cc2652_flasher", socket.SocketType.TCP),
+)
 
 
-@register_action("cc2652_flasher.update_firmware", UpdateFirmwareAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}), synchronous=False)
-async def update_firmware_action_to_code(config, action_id, template_arg, args):
+@register_action(
+    "cc2652_flasher.update_firmware",
+    UpdateFirmwareAction,
+    cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}),
+    synchronous=False,
+)
+async def update_firmware_action_to_code(config: ConfigType, action_id: Any, template_arg: Any, args: Any) -> Any:
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
     cg.add(act.set_parent(parent))
@@ -73,10 +96,15 @@ async def update_firmware_action_to_code(config, action_id, template_arg, args):
 @register_action(
     "cc2652_flasher.erase_flash",
     EraseFlashAction,
-    cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher), cv.Optional(CONF_ERASE_MODE, default="auto"): ERASE_MODE}),
+    cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(CC2652Flasher),
+            cv.Optional(CONF_ERASE_MODE, default="auto"): ERASE_MODE,
+        }
+    ),
     synchronous=False,
 )
-async def erase_flash_action_to_code(config, action_id, template_arg, args):
+async def erase_flash_action_to_code(config: ConfigType, action_id: Any, template_arg: Any, args: Any) -> Any:
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
     cg.add(act.set_parent(parent))
@@ -85,40 +113,56 @@ async def erase_flash_action_to_code(config, action_id, template_arg, args):
     return act
 
 
-@register_action("cc2652_flasher.check_update", CheckUpdateAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}), synchronous=False)
-async def check_update_action_to_code(config, action_id, template_arg, args):
+@register_action(
+    "cc2652_flasher.check_update",
+    CheckUpdateAction,
+    cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}),
+    synchronous=False,
+)
+async def check_update_action_to_code(config: ConfigType, action_id: Any, template_arg: Any, args: Any) -> Any:
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
     cg.add(act.set_parent(parent))
     return act
 
 
-@register_action("cc2652_flasher.detect_variant", DetectVariantAction, cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}), synchronous=False)
-async def detect_variant_action_to_code(config, action_id, template_arg, args):
+@register_action(
+    "cc2652_flasher.detect_variant",
+    DetectVariantAction,
+    cv.Schema({cv.Required(CONF_ID): cv.use_id(CC2652Flasher)}),
+    synchronous=False,
+)
+async def detect_variant_action_to_code(config: ConfigType, action_id: Any, template_arg: Any, args: Any) -> Any:
     act = cg.new_Pvariable(action_id)
     parent = await cg.get_variable(config[CONF_ID])
     cg.add(act.set_parent(parent))
     return act
 
 
-async def to_code(config):
+async def to_code(config: ConfigType) -> None:
     # Ensure our C++ header is visible to the generated build for both local and GitHub layouts.
-    cg.add_global(cg.RawStatement(
-        "#if __has_include(\"esphome/components/cc2652_flasher/cc2652_flasher.h\")\n"
-        "#  include \"esphome/components/cc2652_flasher/cc2652_flasher.h\"\n"
-        "#elif __has_include(\"cc2652_flasher.h\")\n"
-        "#  include \"cc2652_flasher.h\"\n"
-        "#else\n"
-        "#  error \"cc2652_flasher.h not found\"\n"
-        "#endif"
-    ))
+    cg.add_global(
+        cg.RawStatement(
+            '#if __has_include("esphome/components/cc2652_flasher/cc2652_flasher.h")\n'
+            '#  include "esphome/components/cc2652_flasher/cc2652_flasher.h"\n'
+            '#elif __has_include("cc2652_flasher.h")\n'
+            '#  include "cc2652_flasher.h"\n'
+            "#else\n"
+            '#  error "cc2652_flasher.h not found"\n'
+            "#endif"
+        )
+    )
     # Build system will compile cc2652_flasher.cpp (we also list it in YAML includes).
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    preference_hash = zlib.crc32(("cc2652_flasher:" + str(config[CONF_ID]) + ":runtime_baud").encode())
+    cg.add(var.set_baud_preference_hash(preference_hash))
+    if CONF_RUNTIME_BAUD_SELECT in config:
+        cg.add(var.set_runtime_baud_select(await cg.get_variable(config[CONF_RUNTIME_BAUD_SELECT])))
 
     cg.add(var.set_update_url(config[CONF_URL]))
 
-    uart_comp = await cg.get_variable(config["uart_id"])
+    uart_comp = await cg.get_variable(config[CONF_UART_ID])
     bsl = await cg.get_variable(config[CONF_BSL_SWITCH])
     rst = await cg.get_variable(config[CONF_RST_SWITCH])
 
@@ -168,3 +212,6 @@ async def to_code(config):
         vstr = config[CONF_VARIANT]
         vmap = {"auto": 0, "p2": 2, "cc2652p2": 2, "p7": 7, "cc2652p7": 7}
         cg.add(var.set_variant(vmap.get(vstr, 0)))
+
+
+DOMAIN = "cc2652_flasher"

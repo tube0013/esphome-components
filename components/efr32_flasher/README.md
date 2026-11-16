@@ -23,7 +23,7 @@ be selected automatically using board/mfg information probed by the
 
 * ESPHome 2025.8.0 or newer (tested on 2025.8.3).
 * `efr32_info` recommended so we can auto-select manifest variants.
-* UART wiring to the EFR32 module with RTS/CTS flow control.
+* UART wiring to the EFR32 module. MG24 uses RTS/CTS; MGM12/MGM210 two-wire profiles set `hardware_flow_control: false`.
 * GPIOs wired to the module’s RST and BSL pins.
 
 ## Manifest Format
@@ -56,7 +56,7 @@ root-level `fw_url`, `md5` and optional `size` are used.
 ```yaml
 external_components:
   - source: github://youruser/yourrepo@latest
-    components: [efr32_flasher]
+    components: [efr32_flasher, efr32_info, zigbee_firmware_baud]
 
 uart:
   id: uart_bus
@@ -190,3 +190,23 @@ frame handling or CRC logic, keep both components synchronized. Future work:
 * expose bootloader progress via a sensor instead of log-only
 * add retry/back-off for manifest fetch
 * upstream stream-server pause/resume APIs
+
+## Builder extensions
+
+This version is tested with ESPHome 2026.10.1. `variant: flat` disables
+MG24/BM24 identification and rejects variant catalogs, for model-specific older
+radio manifests. `hardware_flow_control: false` preserves the configured TX/RX
+pins without applying MG24 RTS/CTS. The default remains the MG24 hardware-flow
+profile for existing MG24 configurations.
+
+An optional manifest `baudrate` integer changes and persists the application UART
+rate only after successful programming, before the busy sensor releases serial
+ownership. See [baud-rate behavior](../../docs/radio-flashing.md) and
+[older-board mappings and feeds](../../docs/radio-flashing.md).
+
+`bootloader_entry: ezsp` enables software entry and omits `boot_switch`; the
+default `gpio` mode still requires that switch. The native
+`efr32_flasher.enter_bootloader` action supports the manual UI button and the
+flash workflow. EZSP uses application baud for negotiation and requires the
+Gecko menu at bootloader baud before transferring firmware. See
+[MGM21 dual flashing](../../docs/radio-flashing.md) for recovery and details.

@@ -1,6 +1,8 @@
 // efr32_flasher.h - ESPHome external component for EFR32 (Gecko) flashing via XMODEM-CRC
 #pragma once
 
+#include "esphome/components/zigbee_firmware_baud/runtime_baud.h"
+#include "esphome/components/zigbee_firmware_baud/flash_status.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -34,10 +36,18 @@ class EFR32Flasher : public Component {
   void set_rst_switch(esphome::switch_::Switch *s){ rst_sw_ = s; }
   void set_pause_switch(esphome::switch_::Switch *s){ pause_sw_ = s; }
   void set_update_url(const std::string &u){ manifest_url_ = u; }
+  void set_hardware_flow_control(bool enabled) { hardware_flow_control_ = enabled; }
   void set_verbose(bool v){ verbose_ = v; }
   void set_show_progress(bool v){ show_progress_ = v; }
   void set_progress_step(uint8_t s){ progress_step_ = s ? s : 5; }
-  void set_runtime_baud_rate(uint32_t baud){ runtime_baud_rate_ = baud; }
+  void set_runtime_baud_rate(uint32_t baud){ runtime_baud_rate_ = baud; application_baud_.manual(baud); }
+  void set_baud_preference_hash(uint32_t hash){ application_baud_.set_preference_hash(hash); }
+  void set_runtime_baud_select(select::Select *value){ application_baud_.set_selector(value); }
+  const zigbee_firmware_baud::FlashStatus &get_flash_status() const { return flash_status_; }
+  template<typename F> void set_flash_listener(F &&listener) {
+    this->flash_status_.listener = std::forward<F>(listener);
+  }
+  bool is_applying_manifest_baud() const { return application_baud_.applying_manifest(); }
   void set_bootloader_baud_rate(uint32_t baud){ bootloader_baud_rate_ = baud; }
   void set_fw_text_sensor(esphome::text_sensor::TextSensor *t){ fw_text_ = t; }
   void set_latest_text_sensor(esphome::text_sensor::TextSensor *t){ latest_text_ = t; }
@@ -49,15 +59,20 @@ class EFR32Flasher : public Component {
   void set_board_name_text(esphome::text_sensor::TextSensor *t){ board_name_text_ = t; }
   void set_mfg_string_text(esphome::text_sensor::TextSensor *t){ mfg_string_text_ = t; }
   void set_chip_text(esphome::text_sensor::TextSensor *t){ chip_text_ = t; }
-  void set_variant(uint8_t v){ variant_force_ = v; } // 0=auto,1=MGM24,2=BM24
+  void set_variant(uint8_t v){ variant_force_ = v; } // 0=auto,1=MGM24,2=BM24,3=model-specific flat manifest
   void set_busy_sensor(esphome::binary_sensor::BinarySensor *b){ busy_sensor_ = b; }
 
   void start_firmware_update(){ want_update_ = true; }
   void start_check_update(){ want_check_ = true; }
+  void set_ezsp_bootloader(bool value) { ezsp_bootloader_ = value; }
+  void start_bootloader() { want_bootloader_ = true; }
+  bool bootloader_pending() const { return want_bootloader_ || bootloader_running_; }
+  bool bootloader_succeeded() const { return bootloader_ready_; }
+  void restore_runtime_baud() { bootloader_ready_ = false; apply_runtime_baud_(); }
 
   void setup() override;
   void loop() override;
-  float get_setup_priority() const override { return setup_priority::HARDWARE; }
+  float get_setup_priority() const override { return setup_priority::HARDWARE - 3.0f; }
 
  private:
   // HTTP helpers
@@ -65,7 +80,9 @@ class EFR32Flasher : public Component {
   bool fetch_manifest_(const std::string &url, std::string &fw_url_out);
 
   // Bootloader / XMODEM helpers
-  void enter_bootloader_();
+  bool enter_bootloader_();
+  bool probe_bootloader_menu_(uint32_t timeout_ms);
+  void run_bootloader_();
   void leave_bootloader_();
   bool await_char_(uint8_t expect, uint32_t timeout_ms);
   bool read_byte_(uint8_t &b, uint32_t timeout_ms=500);
@@ -112,7 +129,9 @@ class EFR32Flasher : public Component {
   std::string manifest_url_;
   bool want_update_{false};
   bool want_check_{false};
+  bool ezsp_bootloader_{false}, want_bootloader_{false}, bootloader_running_{false}, bootloader_ready_{false};
   bool verbose_{false};
+  bool hardware_flow_control_{true};
   bool show_progress_{true};
   uint8_t progress_step_{5};
   uint32_t runtime_baud_rate_{0};
@@ -122,6 +141,9 @@ class EFR32Flasher : public Component {
   uint32_t expected_size_{0};
   uint8_t variant_force_{0};
   std::string variant_key_override_{};
+  zigbee_firmware_baud::RuntimeBaud application_baud_;
+  zigbee_firmware_baud::FlashStatus flash_status_;
+  uint32_t manifest_baudrate_{0};
 };
 
 class UpdateFirmwareAction : public esphome::Action<> {
@@ -136,6 +158,14 @@ class CheckUpdateAction : public esphome::Action<> {
  public:
   void set_parent(EFR32Flasher *p){ parent_ = p; }
   void play() override { if(parent_) parent_->start_check_update(); }
+ private:
+  EFR32Flasher *parent_{nullptr};
+};
+
+class EnterBootloaderAction : public esphome::Action<> {
+ public:
+  void set_parent(EFR32Flasher *parent) { parent_ = parent; }
+  void play() override { if (parent_ != nullptr) parent_->start_bootloader(); }
  private:
   EFR32Flasher *parent_{nullptr};
 };
