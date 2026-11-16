@@ -14,6 +14,8 @@ from esphome.components.web_server_base import CONF_WEB_SERVER_BASE_ID
 from esphome.const import CONF_ID
 from esphome.types import ConfigType
 
+from .socket_budget import register_shared_http_sockets
+
 CONF_ETHERNET = "ethernet"
 CONF_ETHERNET_ID = "ethernet_id"
 CONF_FIRMWARE_UPDATE_ID = "firmware_update_id"
@@ -25,7 +27,7 @@ CONF_WIFI = "wifi"
 DOMAIN = "network_settings"
 
 DEPENDENCIES = [CONF_ETHERNET, "web_server", "esp32"]
-AUTO_LOAD = ["json"]
+AUTO_LOAD = ["json", "socket"]
 
 ns = cg.esphome_ns.namespace("network_settings")
 NetworkSettings = ns.class_("NetworkSettings", cg.Component)
@@ -53,6 +55,7 @@ def final_validate(config: ConfigType) -> None:
         raise cv.Invalid("network_settings requires Ethernet enabled on boot")
     if CONF_WIFI in full:
         raise cv.Invalid("network_settings currently supports Ethernet-only devices")
+    register_shared_http_sockets(config)
 
 
 FINAL_VALIDATE_SCHEMA = final_validate
