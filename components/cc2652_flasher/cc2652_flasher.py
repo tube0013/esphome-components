@@ -6,7 +6,7 @@ from typing import Any
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.automation import register_action
-from esphome.components import select, text_sensor, uart
+from esphome.components import select, socket, text_sensor, uart
 from esphome.components import switch as switch_
 from esphome.const import CONF_ID, CONF_URL
 from esphome.types import ConfigType
@@ -17,7 +17,7 @@ CONF_UART_ID = "uart_id"
 
 DEPENDENCIES = ["uart", "switch"]
 # Only pull in what we actually need for linking
-AUTO_LOAD = ["md5", "json", "zigbee_firmware_baud"]
+AUTO_LOAD = ["md5", "json", "zigbee_firmware_baud", "socket"]
 
 CONF_BSL_SWITCH = "bsl_switch"
 CONF_RST_SWITCH = "rst_switch"
@@ -46,32 +46,38 @@ DetectVariantAction = cc2652_ns.class_("DetectVariantAction")
 
 ERASE_MODE = cv.one_of("sector", "bank", "auto", lower=True)
 
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(CC2652Flasher),
-        cv.Required(CONF_URL): cv.string_strict,
-        cv.Required(CONF_UART_ID): cv.use_id(uart.UARTComponent),
-        cv.Optional(CONF_RUNTIME_BAUD_SELECT): cv.use_id(select.Select),
-        cv.Required(CONF_BSL_SWITCH): cv.use_id(switch_.Switch),
-        cv.Required(CONF_RST_SWITCH): cv.use_id(switch_.Switch),
-        cv.Optional(CONF_BOOT_BAUD, default=0): cv.int_range(min=0),
-        cv.Optional(CONF_RESTORE_BAUD, default=0): cv.int_range(min=0),
-        cv.Optional(CONF_ERASE_MODE, default="bank"): ERASE_MODE,
-        cv.Optional(CONF_DEBUG, default=False): cv.boolean,
-        cv.Optional(CONF_SHOW_PROGRESS, default=True): cv.boolean,
-        cv.Optional(CONF_PROGRESS_STEP, default=5): cv.int_range(min=1, max=50),
-        cv.Optional(CONF_FW_VERSION_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_IEEE_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_LATEST_FW_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_VARIANT_TEXT): cv.use_id(text_sensor.TextSensor),
-        cv.Optional(CONF_CHECK_ON_BOOT, default=True): cv.boolean,
-        cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=0, max=60),
-        cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
-        cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
-        # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
-        cv.Optional(CONF_VARIANT, default="auto"): cv.one_of("auto", "p2", "p7", "cc2652p2", "cc2652p7", lower=True),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(CC2652Flasher),
+            cv.Required(CONF_URL): cv.string_strict,
+            cv.Required(CONF_UART_ID): cv.use_id(uart.UARTComponent),
+            cv.Optional(CONF_RUNTIME_BAUD_SELECT): cv.use_id(select.Select),
+            cv.Required(CONF_BSL_SWITCH): cv.use_id(switch_.Switch),
+            cv.Required(CONF_RST_SWITCH): cv.use_id(switch_.Switch),
+            cv.Optional(CONF_BOOT_BAUD, default=0): cv.int_range(min=0),
+            cv.Optional(CONF_RESTORE_BAUD, default=0): cv.int_range(min=0),
+            cv.Optional(CONF_ERASE_MODE, default="bank"): ERASE_MODE,
+            cv.Optional(CONF_DEBUG, default=False): cv.boolean,
+            cv.Optional(CONF_SHOW_PROGRESS, default=True): cv.boolean,
+            cv.Optional(CONF_PROGRESS_STEP, default=5): cv.int_range(min=1, max=50),
+            cv.Optional(CONF_FW_VERSION_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_IEEE_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_LATEST_FW_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_VARIANT_TEXT): cv.use_id(text_sensor.TextSensor),
+            cv.Optional(CONF_CHECK_ON_BOOT, default=True): cv.boolean,
+            cv.Optional(CONF_CHECK_INTERVAL_DAYS, default=7): cv.int_range(min=0, max=60),
+            cv.Optional(CONF_DETECT_ON_BOOT, default=True): cv.boolean,
+            cv.Optional(CONF_DETECT_ON_BOOT_DELAY_MS, default=0): cv.int_range(min=0, max=10000),
+            # variant: auto | p2 | p7 | cc2652p2 | cc2652p7
+            cv.Optional(CONF_VARIANT, default="auto"): cv.one_of(
+                "auto", "p2", "p7", "cc2652p2", "cc2652p7", lower=True
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    # Manifest and firmware requests are sequential; one outbound connection per flasher.
+    socket.consume_sockets(1, "cc2652_flasher", socket.SocketType.TCP),
+)
 
 
 @register_action(

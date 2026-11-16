@@ -6,7 +6,7 @@ from typing import Any
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.automation import register_action
-from esphome.components import binary_sensor, select, text_sensor, uart
+from esphome.components import binary_sensor, select, socket, text_sensor, uart
 from esphome.components import switch as switch_
 from esphome.const import CONF_ID, CONF_URL
 from esphome.types import ConfigType
@@ -18,7 +18,7 @@ CONF_UART_ID = "uart_id"
 
 
 DEPENDENCIES = ["uart", "switch"]
-AUTO_LOAD = ["md5", "json", "zigbee_firmware_baud"]
+AUTO_LOAD = ["md5", "json", "zigbee_firmware_baud", "socket"]
 
 CONF_BL_SWITCH = "boot_switch"
 CONF_RST_SWITCH = "rst_switch"
@@ -89,6 +89,8 @@ CONFIG_SCHEMA = cv.All(
         }
     ).extend(cv.COMPONENT_SCHEMA),
     validate_bootloader,
+    # Manifest and firmware requests are sequential; one outbound connection per flasher.
+    socket.consume_sockets(1, "efr32_flasher", socket.SocketType.TCP),
 )
 
 
