@@ -46,6 +46,7 @@ CONF_STATUS_SENSOR = "status_sensor"
 CONF_ESP32 = "esp32"
 CONF_BOARD = "board"
 CONF_BAUD_SELECT = "baud_select"
+CONF_VARIANT_SELECT = "variant_select"
 CONF_BOOT_PROBE_SCRIPT = "boot_probe_script"
 CONF_BOOTLOADER_SCRIPT = "bootloader_script"
 CONF_BUSY_SENSOR = "busy_sensor"
@@ -133,6 +134,7 @@ def cc2652_schema(value: Any) -> Any:
         cv.Required(CONF_STREAM_SERVER_ID): cv.use_id(stream_server.StreamServerComponent),
         cv.Required(CONF_FLASH_SCRIPT): cv.use_id(script.Script),
         cv.Required(CONF_BOOT_PROBE_SCRIPT): cv.use_id(script.Script),
+        cv.Optional(CONF_VARIANT_SELECT): cv.use_id(select.Select),
     }
     for key in [
         CONF_CHECK_BUTTON,

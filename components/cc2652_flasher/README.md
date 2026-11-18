@@ -136,6 +136,10 @@ ESPHome saves the selection using its normal preferences mechanism and restores
 it before boot detection, so a saved P2/P7 override also skips the boot probe.
 Select **Auto** to clear the override and use ROM/ZNP detection again.
 
+The TubesZB frontend exposes the same saved selector on **Firmware → Zigbee radio firmware**
+when `tubeszb_web.cc2652.variant_select` is bound to `cc2652_variant_override`.
+Changing either frontend updates the other and requires a fresh firmware check.
+
 The optional YAML `variant` setting remains case-insensitive. When using the
 dropdown, leave `variant: auto`: the dropdown's initial or restored selection
 controls the runtime override. Keep the option order and `setup_priority` shown

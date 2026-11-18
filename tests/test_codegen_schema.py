@@ -12,7 +12,7 @@ def test_dynamic_radio_schemas_are_extractable() -> None:
     web = importlib.import_module("esphome.components.tubeszb_web")
     for name, keys in [
         ("zigbee_schema", {"flash_button", "busy_sensor", "firmware_sensor", "custom_url_text"}),
-        ("cc2652_schema", {"flash_script", "boot_probe_script", "board_sensor", "flash_button"}),
+        ("cc2652_schema", {"flash_script", "boot_probe_script", "board_sensor", "flash_button", "variant_select"}),
         ("serial_radio_schema", {"stream_server_id", "reset_button", "baud_select", "radio_model"}),
     ]:
         schema = getattr(web, name)(SCHEMA_EXTRACT)

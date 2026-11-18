@@ -1,4 +1,7 @@
 #include "tubeszb_web.h"
+#ifdef USE_TUBESZB_CC2652
+#include "cc2652_variant.h"
+#endif
 #include "esphome/components/network_settings/request_helpers.h"
 #include "gbl_url.h"
 
@@ -380,7 +383,7 @@ void TubesZBWeb::handleRequest(AsyncWebServerRequest *request) {
 #ifdef USE_TUBESZB_ZIGBEE
   } else if (url == "/tubeszb/zigbee-action") {
     const auto action = request->arg("action");
-    const auto value = request->arg("value");
+    std::string value = request->arg("value");
     if (action == "check") {
       if (this->check_button_ == nullptr) {
         reject(400, "Radio firmware checks are unavailable for this model.");
@@ -423,6 +426,19 @@ void TubesZBWeb::handleRequest(AsyncWebServerRequest *request) {
         return;
       }
       this->command_ = Command::COMMAND_RADIO_FLASH;
+    } else if (action == "variant") {
+#ifdef USE_TUBESZB_CC2652
+      const char *option = cc2652_variant_option(value);
+      if (this->variant_override_ == nullptr || option == nullptr || !this->variant_override_->has_option(option)) {
+        reject(400, "Choose Auto, P2 or P7.");
+        return;
+      }
+      value = option;
+      this->command_ = Command::COMMAND_SET_VARIANT;
+#else
+      reject(400, "Variant overrides are only available for CC2652 radios.");
+      return;
+#endif
     } else if (action == "baud") {
 #if defined(USE_TUBESZB_EFR32) || defined(USE_TUBESZB_SERIAL_RADIO)
       if (this->baud_ == nullptr || !this->baud_->has_option(value)) {

@@ -30,7 +30,9 @@ inline CC2652LogEvent decode_cc2652_log(const std::string &line) {
     return {E::KIND_PROBE_START};
   if (line.find("Update finished OK.") != std::string::npos)
     return {E::KIND_FLASH_OK};
-  if (line.find("Variant detection: CC2652P2") != std::string::npos ||
+  if (line.find("Using configured variant: CC2652P2 (ROM probe skipped)") != std::string::npos ||
+      line.find("Using configured variant: CC2652P7 (ROM probe skipped)") != std::string::npos ||
+      line.find("Variant detection: CC2652P2") != std::string::npos ||
       line.find("Variant detection: CC2652P7") != std::string::npos)
     return {E::KIND_PROBE_OK};
   if (line.find("Variant detection failed") != std::string::npos ||

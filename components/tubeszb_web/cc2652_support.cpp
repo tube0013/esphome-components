@@ -12,7 +12,8 @@ const std::string &TubesZBWeb::radio_source_key_() const { return this->radio_so
 
 void TubesZBWeb::refresh_radio_source_key_() {
   // Inputs change only on sensor/channel/URL callbacks, never during idle sampling.
-  this->radio_source_key_cache_ = std::string(this->radio_.zigbee_beta ? "beta|" : "stable|") + this->radio_.board;
+  this->radio_source_key_cache_ = std::string(this->radio_.zigbee_beta ? "beta|" : "stable|") + this->radio_.board +
+                                  "|" + this->radio_.selected_variant;
 }
 
 void TubesZBWeb::setup_radio_() {
@@ -51,6 +52,16 @@ void TubesZBWeb::setup_radio_() {
   bind(this->latest_sensor_, &RadioState::latest);
   bind(this->board_sensor_, &RadioState::board);
   bind(this->ieee_sensor_, &RadioState::ieee);
+  if (this->variant_override_ != nullptr) {
+    this->radio_.selected_variant = this->variant_override_->current_option();
+    this->variant_override_->add_on_state_callback([this](size_t) {
+      std::lock_guard<std::mutex> lock(this->mutex_);
+      this->radio_.selected_variant = this->variant_override_->current_option();
+      this->radio_.checked = false;
+      this->radio_checked_key_.clear();
+      this->refresh_radio_source_key_();
+    });
+  }
   this->radio_.manufacturer = "Texas Instruments";
   this->radio_.status = "Ready";
   this->zigbee_beta_->add_on_state_callback([this](bool value) {
@@ -125,8 +136,11 @@ void TubesZBWeb::radio_log_(uint8_t level, const char *tag, const char *message,
     this->radio_.progress = event.progress;
   if (event.kind == E::KIND_FLASH_OK)
     this->cc_flash_ok_ = true;
-  if (event.kind == E::KIND_PROBE_OK)
+  if (event.kind == E::KIND_PROBE_OK) {
+    // A configured variant completes without the ROM probe's start log.
+    this->cc_started_ = true;
     this->cc_probe_ok_ = true;
+  }
   if (event.kind == E::KIND_PROBE_FAILED || (level <= ESPHOME_LOG_LEVEL_ERROR && this->radio_.busy))
     this->cc_failed_ = true;
   if (event.kind == E::KIND_BOOTLOADER_READY) {
@@ -198,6 +212,9 @@ void TubesZBWeb::run_radio_command_(Command command, const std::string &value) {
     case Command::COMMAND_SERIAL_RESUME:
       this->resume_button_->press();
       break;
+    case Command::COMMAND_SET_VARIANT:
+      this->variant_override_->make_call().set_option(value).perform();
+      break;
     case Command::COMMAND_GATEWAY_CHANNEL:
       this->gateway_beta_->control(value == "beta");
       break;
@@ -258,6 +275,8 @@ void TubesZBWeb::radio_json_(JsonObject root) {
   data["firmware"] = this->radio_.firmware;
   data["latest"] = this->radio_.latest;
   data["board_name"] = this->radio_.board;
+  data["supports_variant_override"] = this->variant_override_ != nullptr;
+  data["variant_override"] = this->radio_.selected_variant;
   data["manufacturer"] = this->radio_.manufacturer;
   data["ieee"] = this->radio_.ieee;
   data["info_status"] = this->radio_.status;
