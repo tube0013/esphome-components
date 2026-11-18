@@ -82,7 +82,16 @@ class CC2652Flasher : public Component {
   void set_variant_text_sensor(esphome::text_sensor::TextSensor *t){ variant_text_ = t; }
   void set_check_on_boot(bool v){ check_on_boot_ = v; }
   void set_check_interval_days(uint16_t d){ if(d==0) d=7; check_interval_ms_ = (uint32_t)d * 24u * 60u * 60u * 1000u; }
-  void set_variant(uint8_t v){ variant_force_ = v; }
+  void set_variant(uint8_t v){
+    if (v != 0 && v != 2 && v != 7) return;
+    if (variant_force_ == v) return;
+    variant_force_ = v;
+    // A web selection must take effect immediately, without entering the ROM BSL.
+    uint8_t selected = choose_variant_();
+    if (variant_text_) variant_text_->publish_state(selected == 7 ? "CC2652P7" : selected == 2 ? "CC2652P2" : "Unknown");
+    // The previous manifest version may belong to a different hardware variant.
+    if (latest_text_) latest_text_->publish_state("");
+  }
   void set_detect_on_boot(bool v){ detect_on_boot_ = v; }
   void set_detect_on_boot_delay_ms(uint16_t d){ detect_on_boot_delay_ms_ = d; }
   void start_firmware_update(){ want_update_ = true; }
@@ -94,8 +103,10 @@ class CC2652Flasher : public Component {
     application_baud_.setup(restore_baud_rate_ != 0 ? restore_baud_rate_ : uart_->get_baud_rate());
     restore_baud_rate_ = application_baud_.current();
     restore_baud_();
-    // Optionally detect variant very early at boot
-    if (detect_on_boot_) {
+    // Publish a configured variant even when automatic boot detection is disabled.
+    if (variant_force_ == 2 || variant_force_ == 7) {
+      this->run_detect_variant_();
+    } else if (detect_on_boot_) {
       if (detect_on_boot_delay_ms_ == 0) {
         this->run_detect_variant_();
       } else {
@@ -212,7 +223,7 @@ class CC2652Flasher : public Component {
     return true;
   }
 
- bool fetch_manifest_(const std::string &url, std::string &fw_url_out){
+ bool fetch_manifest_(const std::string &url, std::string &fw_url_out, uint8_t vsel, uint8_t product){
     manifest_baudrate_ = 0;
     esp_http_client_handle_t client;
     if(!http_open_(url, client)) return false;
@@ -257,7 +268,6 @@ class CC2652Flasher : public Component {
 
     // Variant-aware selection
     bool selected = false;
-    uint8_t vsel = choose_variant_();
 
     if (doc["variants"].is<JsonArrayConst>()){
       for (JsonVariantConst it : doc["variants"].as<JsonArrayConst>()){
@@ -267,7 +277,7 @@ class CC2652Flasher : public Component {
           auto m = it["match"].as<JsonObjectConst>();
           if (m["product"].is<JsonArrayConst>()){
             for (JsonVariantConst pv : m["product"].as<JsonArrayConst>()){
-              if (pv.is<uint32_t>()) { if ((uint8_t)pv.as<uint32_t>() == znp_product_) match = true; }
+              if (pv.is<uint32_t>()) { if ((uint8_t)pv.as<uint32_t>() == product) match = true; }
             }
           }
           if (!match && m["variant"].is<const char*>()){
@@ -278,7 +288,7 @@ class CC2652Flasher : public Component {
         }
         // also allow simple keys at top-level of variant entry
         if (!match && it["product"].is<uint32_t>()){
-          if ((uint8_t)it["product"].as<uint32_t>() == znp_product_) match = true;
+          if ((uint8_t)it["product"].as<uint32_t>() == product) match = true;
         }
         if (!match && it["variant"].is<const char*>()){
           std::string vs = it["variant"].as<const char*>();
@@ -962,11 +972,11 @@ class CC2652Flasher : public Component {
       ESP_LOGD(TAG, "Detected ZNP product=%u for variant selection", (unsigned)znp_product_);
       if (variant_text_) {
         const char* vs = nullptr;
-        if (variant_detected_==7) vs="CC2652P7"; else if (variant_detected_==2) vs="CC2652P2";
-        else if (znp_product_==7) vs="CC2652P7"; else if (znp_product_==2) vs="CC2652P2";
+        uint8_t v = choose_variant_();
+        if (v == 7) vs="CC2652P7"; else if (v == 2) vs="CC2652P2";
         if (vs) variant_text_->publish_state(vs); else ESP_LOGD(TAG, "Variant still unknown; keeping previous value");
       }
-      if (znp_product_ != 2 && znp_product_ != 7) {
+      if (choose_variant_() == 0) {
         ESP_LOGW(TAG, "SYS_VERSION product=%u does not distinguish P2/P7; variant remains unknown until flashing or manual override.", (unsigned)znp_product_);
       }
     }
@@ -990,11 +1000,11 @@ class CC2652Flasher : public Component {
       znp_product_ = pl[1];
       if (variant_text_) {
         const char* vs = nullptr;
-        if (variant_detected_==7) vs="CC2652P7"; else if (variant_detected_==2) vs="CC2652P2";
-        else if (znp_product_==7) vs="CC2652P7"; else if (znp_product_==2) vs="CC2652P2";
+        uint8_t v = choose_variant_();
+        if (v == 7) vs="CC2652P7"; else if (v == 2) vs="CC2652P2";
         if (vs) variant_text_->publish_state(vs); else ESP_LOGD(TAG, "Variant still unknown; keeping previous value");
       }
-      if (znp_product_ != 2 && znp_product_ != 7) {
+      if (choose_variant_() == 0) {
         ESP_LOGW(TAG, "Variant detection via SYS_VERSION: unknown (product=%u). Set 'variant' in YAML if needed.", (unsigned)znp_product_);
       }
       uint32_t code_rev = (uint32_t)pl[5] | ((uint32_t)pl[6] << 8) | ((uint32_t)pl[7] << 16) | ((uint32_t)pl[8] << 24);
@@ -1155,7 +1165,7 @@ class CC2652Flasher : public Component {
     }
 
     std::string fw_url;
-    if(!fetch_manifest_(manifest_url_, fw_url)){
+    if(!fetch_manifest_(manifest_url_, fw_url, choose_variant_(), znp_product_)){
       ESP_LOGE(TAG,"Manifest fetch/parse failed.");
       ESP_LOGE(TAG,"If your manifest has variants and variant detection shows 'unknown', set 'variant: p2|p7' in YAML.");
       return;
@@ -1243,7 +1253,7 @@ class CC2652Flasher : public Component {
       }
     }
     std::string fw_url;
-    bool man_ok = fetch_manifest_(manifest_url_, fw_url);
+    bool man_ok = fetch_manifest_(manifest_url_, fw_url, choose_variant_(), znp_product_);
     if (!manifest_version_.empty() && latest_text_) latest_text_->publish_state(manifest_version_.c_str());
     if (!man_ok && fw_url.empty()) {
       ESP_LOGW(TAG, "Variant unknown; cannot select firmware URL from manifest (checking only). Set 'variant: p2|p7' if needed.");
@@ -1259,6 +1269,12 @@ class CC2652Flasher : public Component {
   }
 
   void run_detect_variant_(){
+    if (variant_force_ == 2 || variant_force_ == 7) {
+      const char *variant = variant_force_ == 7 ? "CC2652P7" : "CC2652P2";
+      ESP_LOGI(TAG, "Using configured variant: %s (ROM probe skipped)", variant);
+      if (variant_text_) variant_text_->publish_state(variant);
+      return;
+    }
     ESP_LOGI(TAG, "Detecting CC2652 variant via ROM bootloader…");
     // Make sure we have basic config
     if (!uart_ || !bsl_sw_ || !rst_sw_) { ESP_LOGE(TAG, "Not configured (uart/switches)."); return; }
