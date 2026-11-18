@@ -57,7 +57,16 @@ class CC2652Flasher : public Component {
   void set_variant_text_sensor(esphome::text_sensor::TextSensor *t){ variant_text_ = t; }
   void set_check_on_boot(bool v){ check_on_boot_ = v; }
   void set_check_interval_days(uint16_t d){ if(d==0) d=7; check_interval_ms_ = (uint32_t)d * 24u * 60u * 60u * 1000u; }
-  void set_variant(uint8_t v){ variant_force_ = v; }
+  void set_variant(uint8_t v){
+    if (v != 0 && v != 2 && v != 7) return;
+    if (variant_force_ == v) return;
+    variant_force_ = v;
+    // A web selection must take effect immediately, without entering the ROM BSL.
+    uint8_t selected = choose_variant_();
+    if (variant_text_) variant_text_->publish_state(selected == 7 ? "CC2652P7" : selected == 2 ? "CC2652P2" : "Unknown");
+    // The previous manifest version may belong to a different hardware variant.
+    if (latest_text_) latest_text_->publish_state("");
+  }
   void set_detect_on_boot(bool v){ detect_on_boot_ = v; }
   void set_detect_on_boot_delay_ms(uint16_t d){ detect_on_boot_delay_ms_ = d; }
   void start_firmware_update(){ want_update_ = true; }
@@ -83,7 +92,7 @@ class CC2652Flasher : public Component {
   void flush_uart_();
   bool read_exact_(uint8_t *dst, size_t n, uint32_t timeout_ms=500);
   bool http_open_(const std::string &url, esp_http_client_handle_t &client, int timeout_ms=30000);
-  bool fetch_manifest_(const std::string &url, std::string &fw_url_out);
+  bool fetch_manifest_(const std::string &url, std::string &fw_url_out, uint8_t vsel, uint8_t product);
   static inline uint8_t sum8_(const std::vector<uint8_t>&v){ return sum8_(v.data(), v.size()); }
   bool send_packet_(const std::vector<uint8_t> &payload, uint32_t ack_timeout=1500);
   bool recv_status_snoop_(uint8_t &status, uint32_t total_timeout_ms=1200, uint32_t ib_gap_ms=15);
@@ -119,6 +128,12 @@ class CC2652Flasher : public Component {
   void run_check_update_();
   void run_detect_variant_();
   bool detect_variant_via_bsl_();
+  uint8_t choose_variant_() const {
+    if (variant_force_ == 2 || variant_force_ == 7) return variant_force_;
+    if (variant_detected_ == 2 || variant_detected_ == 7) return variant_detected_;
+    if (znp_product_ == 2 || znp_product_ == 7) return znp_product_;
+    return 0;
+  }
 
   esphome::uart::UARTComponent *uart_{nullptr};
   esphome::switch_::Switch *bsl_sw_{nullptr};

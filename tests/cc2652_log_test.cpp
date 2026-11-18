@@ -1,7 +1,13 @@
 #include "components/tubeszb_web/cc2652_log.h"
+#include "components/tubeszb_web/cc2652_variant.h"
 #include <cassert>
 
 int main() {
+  using esphome::tubeszb_web::cc2652_variant_option;
+  for (const auto *value : {"auto", "Auto", "AUTO"}) assert(std::string(cc2652_variant_option(value)) == "Auto");
+  for (const auto *value : {"p2", "P2", "cc2652p2", "CC2652P2"}) assert(std::string(cc2652_variant_option(value)) == "P2");
+  for (const auto *value : {"p7", "P7", "cc2652p7", "CC2652P7"}) assert(std::string(cc2652_variant_option(value)) == "P7");
+  for (const auto *value : {"", "P3", "P27", "unknown"}) assert(cc2652_variant_option(value) == nullptr);
   using esphome::tubeszb_web::decode_cc2652_log;
   using E = esphome::tubeszb_web::CC2652LogEvent::Kind;
   assert(decode_cc2652_log("Starting firmware update…").kind == E::KIND_FLASH_START);
@@ -21,6 +27,8 @@ int main() {
   assert(decode_cc2652_log("Update finished OK. Application UART baud ready.").kind == E::KIND_FLASH_OK);
   assert(decode_cc2652_log("Variant detection: CC2652P2").kind == E::KIND_PROBE_OK);
   assert(decode_cc2652_log("Variant detection: CC2652P7").kind == E::KIND_PROBE_OK);
+  assert(decode_cc2652_log("Using configured variant: CC2652P2 (ROM probe skipped)").kind == E::KIND_PROBE_OK);
+  assert(decode_cc2652_log("Using configured variant: CC2652P7 (ROM probe skipped)").kind == E::KIND_PROBE_OK);
   assert(decode_cc2652_log("Variant detection failed.").kind == E::KIND_PROBE_FAILED);
   assert(decode_cc2652_log("Variant detection inconclusive.").kind == E::KIND_PROBE_FAILED);
   assert(decode_cc2652_log("Manual bootloader requested.").kind == E::KIND_BOOTLOADER_START);

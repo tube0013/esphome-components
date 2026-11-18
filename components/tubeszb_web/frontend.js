@@ -133,9 +133,10 @@
       !device || !network || busy || restarting || uploading || !device.restart_allowed;
     qa('[data-action="restart"]').forEach(element => { element.disabled = restartBlocked; });
     qa('[data-channel]').forEach(element => { element.disabled = disabled || Boolean(network?.testing) || device?.checking || (element.dataset.channel === "zigbee" && device?.zigbee?.supports_zigbee_beta === false); });
-    for (const action of ['radio-check','radio-flash','radio-probe','radio-reset','serial-pause','serial-resume','radio-baud','radio-url-save','radio-url-clear','radio-bootloader']) {
+    for (const action of ['radio-check','radio-flash','radio-probe','radio-reset','serial-pause','serial-resume','radio-baud','radio-url-save','radio-url-clear','radio-bootloader','radio-variant']) {
       q('[data-action="'+action+'"]').disabled = disabled || Boolean(network?.testing) || Boolean(device?.checking);
     }
+    q('#tzb-radio-variant').disabled = q('[data-action="radio-variant"]').disabled;
     for (const action of ['radio-check','radio-flash']) q('[data-action="'+action+'"]').disabled ||= Boolean(network?.use_without_internet);
     if (isBasicRadio()) {
       q('[data-action="radio-baud"]').disabled ||= !device?.zigbee?.baud_options?.length;
@@ -351,6 +352,7 @@
     } catch (error) { notify(error.message,true); }
     finally { busy = false;render();schedulePoll(1000); }
   }
+  let radioNativeVariant = null;
   function renderRadio() {
     const radio = device.zigbee;
     bind('radio-board-label',isBasicRadio() ? 'Radio model' : isCC2652() ? 'Radio variant' : 'Radio board');
@@ -367,6 +369,12 @@
     bind('radio-serial-status',radio.paused ? 'Paused' : 'Running');bind('radio-port',String(radio.port));
     bind('update-channel',radio.gateway_beta ? 'Beta gateway channel' : 'Stable gateway channel');
     bind('zigbee-channel',radio.zigbee_beta ? 'Beta Zigbee channel' : 'Stable Zigbee channel');
+    q('[data-cc2652-variant]').hidden = !isCC2652() || !radio.supports_variant_override;
+    const variant = radio.variant_override || 'Auto';
+    if (variant !== radioNativeVariant) {
+      q('#tzb-radio-variant').value = variant;
+      radioNativeVariant = variant;
+    }
     q('[data-channel="gateway"]').checked = radio.gateway_beta;
     q('[data-channel="zigbee"]').checked = radio.zigbee_beta;
     q('[data-channel="zigbee"]').closest("label").hidden = radio.supports_zigbee_beta === false;
@@ -416,7 +424,8 @@
       device.action_pending = true;
       if (action === 'flash') { radioFlashRequested = true;uploadState = null;clearRadioFlashNotice();radioFlashNotice = 'active'; }
       if (action === 'gateway-channel') { device.update_verified = false;device.zigbee.gateway_beta = value === 'beta'; }
-      if (action === 'zigbee-channel' || action === 'url' || action === 'check') device.zigbee.checked = false;
+      if (action === 'zigbee-channel' || action === 'url' || action === 'check' || action === 'variant') device.zigbee.checked = false;
+      if (action === 'variant') device.zigbee.variant_override = value;
       if (action === 'zigbee-channel') device.zigbee.zigbee_beta = value === 'beta';
       if (action === 'url') device.zigbee.custom_url = value;
       notify(action === 'flash' ? 'Zigbee flash requested. Keep power connected until completion.' : action.endsWith('channel') ? (action === 'gateway-channel' ? 'Gateway' : 'Zigbee')+' firmware channel set to '+value+'. Check for updates before installing.' : 'Zigbee action requested.',false,action === 'flash' ? 'radio-flash' : '');
@@ -564,6 +573,7 @@
       case 'radio-reset':openModal('radio:reset','Reset Zigbee radio?','This interrupts the Zigbee serial connection. The ESPHome gateway stays running.','Reset radio');break;
       case 'serial-pause':zigbeeAction('pause');break;
       case 'serial-resume':zigbeeAction('resume');break;
+      case 'radio-variant':zigbeeAction('variant',q('#tzb-radio-variant').value);break;
       case 'radio-baud':zigbeeAction('baud',q('#tzb-radio-baud').value);break;
       case 'radio-url-clear':q('#tzb-radio-url').value = '';zigbeeAction('url','');break;
       case 'radio-url-save':{

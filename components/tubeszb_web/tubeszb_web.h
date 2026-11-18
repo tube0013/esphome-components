@@ -16,9 +16,7 @@
 #ifdef USE_TUBESZB_ZIGBEE
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
-#if defined(USE_TUBESZB_EFR32) || defined(USE_TUBESZB_SERIAL_RADIO)
 #include "esphome/components/select/select.h"
-#endif
 #include "esphome/components/switch/switch.h"
 #ifdef USE_TUBESZB_CC2652
 #include "esphome/components/cc2652_flasher/cc2652_flasher.h"
@@ -71,6 +69,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   void set_radio_flasher(cc2652_flasher::CC2652Flasher *value) { this->radio_flasher_ = value; }
   void set_flash_script(script::Script<> *value) { this->cc_flash_script_ = value; }
   void set_boot_probe_script(script::Script<> *value) { this->cc_boot_probe_script_ = value; }
+  void set_variant_select(select::Select *value) { this->variant_override_ = value; }
 #endif
 #if defined(USE_TUBESZB_EFR32) || defined(USE_TUBESZB_SERIAL_RADIO)
   void set_baud_select(select::Select *value) { this->baud_ = value; }
@@ -109,6 +108,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
     COMMAND_SERIAL_PAUSE,
     COMMAND_SERIAL_RESUME,
     COMMAND_SET_BAUD,
+    COMMAND_SET_VARIANT,
     COMMAND_SET_URL,
     COMMAND_GATEWAY_CHANNEL,
     COMMAND_ZIGBEE_CHANNEL,
@@ -136,6 +136,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
     int progress{-1};
     uint8_t result{0};  // 0=no result, 1=running, 2=completed, 3=failed; never infer a flash success from a disconnect.
     std::string operation, firmware, latest, board, manufacturer, ieee, status, url, selected_baud;
+    std::string selected_variant{"Auto"};
     bool checked{false};
   } radio_;
   ::StreamServerComponent *stream_{nullptr};
@@ -163,6 +164,7 @@ class TubesZBWeb : public Component, public AsyncWebHandler, public ota::OTAGlob
   uint32_t radio_baud_rate_{0};
 #ifdef USE_TUBESZB_CC2652
   cc2652_flasher::CC2652Flasher *radio_flasher_{nullptr};
+  select::Select *variant_override_{nullptr};
   script::Script<> *cc_flash_script_{nullptr}, *cc_boot_probe_script_{nullptr};
   bool cc_started_{false}, cc_failed_{false}, cc_fresh_latest_{false}, cc_flash_ok_{false}, cc_probe_ok_{false};
   void queue_cc2652_automatic_(Command command);

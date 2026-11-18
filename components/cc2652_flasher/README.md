@@ -78,8 +78,24 @@ cc2652_flasher:
   check_interval_days: 7
   detect_on_boot: true
   detect_on_boot_delay_ms: 0
-  # Optional: force variant when radio cannot answer
-  # variant: p2  # or p7
+  # auto (default), p2 or p7; case-insensitive (P2/P7 also work).
+  # Set the known hardware variant to skip the ROM detection probe.
+  variant: auto
+
+select:
+  - platform: template
+    name: CC2652 Variant Override
+    id: cc2652_variant_override
+    optimistic: true
+    restore_value: true
+    initial_option: "Auto"
+    options: ["Auto", "P2", "P7"]
+    # Restore the override before the flasher's boot detection (priority 800).
+    setup_priority: 810
+    on_value:
+      then:
+        - lambda: |-
+            id(zigbee_flasher).set_variant(i == 1 ? 2 : i == 2 ? 7 : 0);
 
 button:
   - platform: template
@@ -110,11 +126,30 @@ text_sensor:
     name: Zigbee Variant
 ```
 
+## Web UI variant override
+With `web_server` enabled, the example's **CC2652 Variant Override** dropdown
+offers **Auto** (the default), **P2**, and **P7**. If detection reports
+`BSL probe: autobaud failed`, select the known hardware variant, then press
+**Check CC2652 Update** or **Flash CC2652**. Changing the dropdown updates the
+variant sensor and firmware selection immediately; it does not start flashing.
+ESPHome saves the selection using its normal preferences mechanism and restores
+it before boot detection, so a saved P2/P7 override also skips the boot probe.
+Select **Auto** to clear the override and use ROM/ZNP detection again.
+
+The TubesZB frontend exposes the same saved selector on **Firmware → Zigbee radio firmware**
+when `tubeszb_web.cc2652.variant_select` is bound to `cc2652_variant_override`.
+Changing either frontend updates the other and requires a fresh firmware check.
+
+The optional YAML `variant` setting remains case-insensitive. When using the
+dropdown, leave `variant: auto`: the dropdown's initial or restored selection
+controls the runtime override. Keep the option order and `setup_priority` shown
+above so saved values restore correctly before detection.
+
 ## Actions
 - `cc2652_flasher.update_firmware` – Fetches manifest, selects variant, erases as needed, programs image, verifies MD5, resets target.
 - `cc2652_flasher.erase_flash` – Erase only. Optional mode: `sector|bank|auto`.
 - `cc2652_flasher.check_update` – Fetches manifest and publishes the latest version to `latest_fw_version_text`.
-- `cc2652_flasher.detect_variant` – Briefly enters ROM BSL to read chip IDs and publish the detected variant.
+- `cc2652_flasher.detect_variant` – Publishes the configured override, or briefly enters ROM BSL to read chip IDs when `variant: auto`.
 
 ## Manifest formats
 Preferred (object):
@@ -148,7 +183,9 @@ Legacy supported:
 
 ## Notes
 - Variant detection uses ROM BSL registers to differentiate P2 vs P7 when ZNP cannot.
-- If your radio cannot answer, set `variant: p2|p7` to force selection for flashing.
+- If probing fails, set `variant: p2` or `variant: p7` to select the known hardware variant. Values are case-insensitive; `P2`, `P7`, `CC2652P2` and `CC2652P7` are also accepted. Omit the option or use `auto` to retain automatic detection.
+- A manual variant skips the ROM detection probe at boot and when the detect action is called. It takes priority over ZNP/ROM results for manifest selection and the variant text sensor, and is published at boot even with `detect_on_boot: false`.
+- The override selects the firmware variant; flashing still requires a working UART/ROM bootloader connection.
 - For local manifests, serve the JSON over HTTP and use its URL; the ESP cannot read files from your workstation.
 - Links `ArduinoJson` and `MD5` automatically via AUTO_LOAD (no manual libs needed).
 - Requires ESP-IDF framework for ESP32 (Arduino framework is not supported).
