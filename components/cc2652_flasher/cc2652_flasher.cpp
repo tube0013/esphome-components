@@ -2,6 +2,7 @@
 // ====== CC2652 Flasher (external component) ======
 #include <vector>
 #include <string>
+#include <cinttypes>
 #include <cstring>
 #include <cctype>
 #include <algorithm>
@@ -391,7 +392,7 @@ class CC2652Flasher : public Component {
       delay_(1); feed_();
     }
     if (a0 == 0xFF || a1 == 0xFF) {
-      ESP_LOGE(TAG,"TX: no ACK/NACK within %u ms (got a0=0x%02X a1=0x%02X)", ack_timeout, a0, a1);
+      ESP_LOGE(TAG,"TX: no ACK/NACK within %" PRIu32 " ms (got a0=0x%02X a1=0x%02X)", ack_timeout, a0, a1);
       return false;
     }
     ESP_LOGV(TAG,"TX: ACK seq a0=0x%02X a1=0x%02X", a0, a1);
@@ -607,8 +608,8 @@ class CC2652Flasher : public Component {
       if (send_packet_(p, 1500)) {
         uint8_t st=0xFF; bool ok = get_status_raw_(st); last_status_ = st;
         if (ok && st == STAT_SUCCESS) return true;
-        if (ok && st == STAT_INVALID_ADDR) { ESP_LOGW(TAG,"SECTOR_ERASE invalid address @0x%08X (likely end of flash)", page_addr); return false; }
-        ESP_LOGE(TAG,"SECTOR_ERASE status error @0x%08X st=0x%02X", page_addr, st);
+        if (ok && st == STAT_INVALID_ADDR) { ESP_LOGW(TAG,"SECTOR_ERASE invalid address @0x%08" PRIX32 " (likely end of flash)", page_addr); return false; }
+        ESP_LOGE(TAG,"SECTOR_ERASE status error @0x%08" PRIX32 " st=0x%02X", page_addr, st);
         return false;
       }
       ESP_LOGW(TAG,"SECTOR_ERASE no ACK (fmt A), retrying fmt B…");
@@ -619,11 +620,11 @@ class CC2652Flasher : public Component {
       p.push_back(CMD_SECTOR_ERASE);
       put_u32_be_(p, page_addr);
       put_u16_le_(p, 1);
-      if (!send_packet_(p, 1500)) { ESP_LOGE(TAG,"SECTOR_ERASE no ACK (fmt B) @0x%08X", page_addr); return false; }
+      if (!send_packet_(p, 1500)) { ESP_LOGE(TAG,"SECTOR_ERASE no ACK (fmt B) @0x%08" PRIX32, page_addr); return false; }
       uint8_t st=0xFF; bool ok = get_status_raw_(st); last_status_ = st;
       if (ok && st == STAT_SUCCESS) return true;
-      if (ok && st == STAT_INVALID_ADDR) { ESP_LOGW(TAG,"SECTOR_ERASE invalid address @0x%08X (likely end of flash)", page_addr); return false; }
-      ESP_LOGE(TAG,"SECTOR_ERASE status error (fmt B) @0x%08X st=0x%02X", page_addr, st);
+      if (ok && st == STAT_INVALID_ADDR) { ESP_LOGW(TAG,"SECTOR_ERASE invalid address @0x%08" PRIX32 " (likely end of flash)", page_addr); return false; }
+      ESP_LOGE(TAG,"SECTOR_ERASE status error (fmt B) @0x%08" PRIX32 " st=0x%02X", page_addr, st);
       return false;
     }
   }
@@ -634,7 +635,7 @@ class CC2652Flasher : public Component {
     while(true){
       uint32_t addr = page * FLASH_PAGE_SIZE;
       if(sector_erase_one_(addr)){
-        ++erased; ++page; if((erased % 8) == 0) ESP_LOGV(TAG, "Erased %u pages so far", (unsigned)erased);
+        ++erased; ++page; if((erased % 8) == 0) { ESP_LOGV(TAG, "Erased %u pages so far", (unsigned)erased); }
         feed_();
       } else {
         if (last_status_ == STAT_INVALID_ADDR){
@@ -664,8 +665,8 @@ class CC2652Flasher : public Component {
     const uint32_t addrs[] = {0x00000000u, 0x00001000u, 0x00002000u, 0x00004000u, 0x00008000u, 0x00010000u, 0x00020000u, 0x00040000u};
     for (uint32_t a : addrs){
       uint32_t v=0;
-      if(!bsl_mem_read32_(a, v)) { ESP_LOGW(TAG, "Readback failed @0x%08X (skipping)", a); continue; }
-      if (v != 0xFFFFFFFFu){ ESP_LOGE(TAG, "Verify failed: @0x%08X = 0x%08X (not erased)", a, v); return false; }
+      if(!bsl_mem_read32_(a, v)) { ESP_LOGW(TAG, "Readback failed @0x%08" PRIX32 " (skipping)", a); continue; }
+      if (v != 0xFFFFFFFFu){ ESP_LOGE(TAG, "Verify failed: @0x%08" PRIX32 " = 0x%08" PRIX32 " (not erased)", a, v); return false; }
       feed_();
     }
     ESP_LOGI(TAG, "Erase verified on sample addresses");
@@ -679,7 +680,7 @@ class CC2652Flasher : public Component {
     for(uint32_t p = first; p <= last; ++p){
       if (erased_pages_.find(p) != erased_pages_.end()) continue;
       uint32_t page_addr = p * FLASH_PAGE_SIZE;
-      ESP_LOGI(TAG,"Erasing page @ 0x%08X", page_addr);
+      ESP_LOGI(TAG,"Erasing page @ 0x%08" PRIX32, page_addr);
       if(!sector_erase_one_(page_addr)) return false;
       erased_pages_.insert(p);
       feed_();
@@ -698,7 +699,7 @@ class CC2652Flasher : public Component {
       p.insert(p.end(), data, data+len);
       if(send_packet_(p)) {
         if(get_status_()) return true;
-        ESP_LOGE(TAG,"MEMORY_WRITE status error @0x%08X len=%u", addr, (unsigned)len);
+        ESP_LOGE(TAG,"MEMORY_WRITE status error @0x%08" PRIX32 " len=%u", addr, (unsigned)len);
         return false;
       }
       ESP_LOGW(TAG,"MEMORY_WRITE no ACK for format A, retrying with length field…");
@@ -746,7 +747,7 @@ class CC2652Flasher : public Component {
         blk &= ~3u; // 4-byte align
         if (blk == 0) break;
         if(do_page_erases && !ensure_erased_(addr, blk)) { esp_http_client_cleanup(client); return false; }
-        if (verbose_) ESP_LOGV(TAG, "DOWNLOAD @0x%08X size=%u", addr, (unsigned)blk);
+        if (verbose_) { ESP_LOGV(TAG, "DOWNLOAD @0x%08" PRIX32 " size=%u", addr, (unsigned)blk); }
         if(!bsl_download_(addr, (uint32_t)blk)) { esp_http_client_cleanup(client); return false; }
         size_t off=0; while(off < blk){ size_t n = std::min((size_t)192, blk - off); if(!bsl_send_data_(&fifo[off], n)) { esp_http_client_cleanup(client); return false; } off += n; feed_(); }
         md5.add(fifo.data(), blk);
@@ -765,7 +766,7 @@ class CC2652Flasher : public Component {
       size_t pad = (4 - (blk & 3u)) & 3u;
       size_t blk_pad = blk + pad;
       if(do_page_erases && !ensure_erased_(addr, blk_pad)) { esp_http_client_cleanup(client); return false; }
-      if (verbose_) ESP_LOGV(TAG, "DOWNLOAD @0x%08X size=%u (tail)", addr, (unsigned)blk_pad);
+      if (verbose_) { ESP_LOGV(TAG, "DOWNLOAD @0x%08" PRIX32 " size=%u (tail)", addr, (unsigned)blk_pad); }
       if(!bsl_download_(addr, (uint32_t)blk_pad)) { esp_http_client_cleanup(client); return false; }
       size_t off=0; while(off < blk){ size_t n = std::min((size_t)192, blk - off); if(!bsl_send_data_(&fifo[off], n)) { esp_http_client_cleanup(client); return false; } off += n; feed_(); }
       if (pad){ uint8_t ff[4] = {0xFF,0xFF,0xFF,0xFF}; size_t offp=0; while(offp < pad){ size_t n = std::min((size_t)pad-offp, (size_t)192); if(!bsl_send_data_(ff, n)) { esp_http_client_cleanup(client); return false; } offp += n; feed_(); } }
@@ -840,7 +841,7 @@ class CC2652Flasher : public Component {
               if (seg_open && !seg.empty()){
                 size_t blk = seg.size(); size_t pad = (4 - (blk & 3u)) & 3u; size_t blk_pad = blk + pad;
                 if(do_page_erases && !ensure_erased_(seg_addr, blk_pad)) { esp_http_client_cleanup(client); return false; }
-                if (verbose_) ESP_LOGV(TAG, "DOWNLOAD @0x%08X size=%u (flush)", seg_addr, (unsigned)blk_pad);
+                if (verbose_) { ESP_LOGV(TAG, "DOWNLOAD @0x%08" PRIX32 " size=%u (flush)", seg_addr, (unsigned)blk_pad); }
                 if(!bsl_download_(seg_addr, (uint32_t)blk_pad)) { esp_http_client_cleanup(client); return false; }
                 size_t offb=0; while(offb < blk){ size_t n = std::min((size_t)192, blk-offb); if(!bsl_send_data_(&seg[offb], n)) { esp_http_client_cleanup(client); return false; } offb += n; feed_(); }
                 if (pad){ uint8_t ff[4] = {0xFF,0xFF,0xFF,0xFF}; size_t offp=0; while(offp < pad){ size_t n = std::min((size_t)pad-offp, (size_t)192); if(!bsl_send_data_(ff, n)) { esp_http_client_cleanup(client); return false; } offp += n; feed_(); } }
@@ -853,7 +854,7 @@ class CC2652Flasher : public Component {
             // If segment grows large, flush in 4KB blocks
             while(seg.size() >= 4096){
               size_t blk = 4096; if(do_page_erases && !ensure_erased_(seg_addr, blk)) { esp_http_client_cleanup(client); return false; }
-              if (verbose_) ESP_LOGV(TAG, "DOWNLOAD @0x%08X size=%u (seg)", seg_addr, (unsigned)blk);
+              if (verbose_) { ESP_LOGV(TAG, "DOWNLOAD @0x%08" PRIX32 " size=%u (seg)", seg_addr, (unsigned)blk); }
               if(!bsl_download_(seg_addr, (uint32_t)blk)) { esp_http_client_cleanup(client); return false; }
               size_t offb=0; while(offb < blk){ size_t n = std::min((size_t)192, blk-offb); if(!bsl_send_data_(&seg[offb], n)) { esp_http_client_cleanup(client); return false; } offb += n; feed_(); }
               md5.add(seg.data(), blk); total += blk; update_progress_(total, expected_size_, last_pc); seg.erase(seg.begin(), seg.begin()+blk); seg_addr += blk; feed_();
@@ -862,11 +863,11 @@ class CC2652Flasher : public Component {
             // Extended Segment Address: upper = segment << 4
             uint16_t seg = ((uint16_t)byte_at(line,4) << 8) | byte_at(line,5);
             upper = ((uint32_t)seg) << 4;
-            ESP_LOGV(TAG,"HEX ESA -> 0x%08X", upper);
+            ESP_LOGV(TAG,"HEX ESA -> 0x%08" PRIX32, upper);
           } else if(rectype == 0x04){
             uint16_t hi = ((uint16_t)byte_at(line,4) << 8) | byte_at(line,5);
             upper = ((uint32_t)hi) << 16;   // ELA upper 16 bits
-            ESP_LOGV(TAG,"HEX ELA -> 0x%08X", upper);
+            ESP_LOGV(TAG,"HEX ELA -> 0x%08" PRIX32, upper);
           } else if(rectype == 0x01){
             ESP_LOGI(TAG,"HEX EOF.");
           } else {
@@ -887,7 +888,7 @@ class CC2652Flasher : public Component {
     if(seg_open && !seg.empty()){
       size_t blk = seg.size(); size_t pad = (4 - (blk & 3u)) & 3u; size_t blk_pad = blk + pad;
       if(do_page_erases && !ensure_erased_(seg_addr, blk_pad)) { esp_http_client_cleanup(client); return false; }
-      if (verbose_) ESP_LOGV(TAG, "DOWNLOAD @0x%08X size=%u (final)", seg_addr, (unsigned)blk_pad);
+      if (verbose_) { ESP_LOGV(TAG, "DOWNLOAD @0x%08" PRIX32 " size=%u (final)", seg_addr, (unsigned)blk_pad); }
       if(!bsl_download_(seg_addr, (uint32_t)blk_pad)) { esp_http_client_cleanup(client); return false; }
       size_t offb=0; while(offb < blk){ size_t n = std::min((size_t)192, blk-offb); if(!bsl_send_data_(&seg[offb], n)) { esp_http_client_cleanup(client); return false; } offb += n; feed_(); }
       if (pad){ uint8_t ff[4] = {0xFF,0xFF,0xFF,0xFF}; size_t offp=0; while(offp < pad){ size_t n = std::min((size_t)pad-offp, (size_t)192); if(!bsl_send_data_(ff, n)) { esp_http_client_cleanup(client); return false; } offp += n; feed_(); } }
@@ -921,13 +922,27 @@ class CC2652Flasher : public Component {
       uint8_t r1=0, r2=0; std::vector<uint8_t> pl;
       if(znp_recv_(r1,r2,pl,400)){
         if(r1==expect_cmd1 && r2==expect_cmd2){ out = std::move(pl); return true; }
-        if(verbose_) ESP_LOGV(TAG, "ZNP unexpected SRSP 0x%02X 0x%02X len=%u", r1, r2, (unsigned)pl.size());
+        if(verbose_) { ESP_LOGV(TAG, "ZNP unexpected SRSP 0x%02X 0x%02X len=%u", r1, r2, (unsigned)pl.size()); }
       }
       delay_(wait_ms);
     }
     return false;
   }
-  void update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){ if(!show_progress_) return; if(expected>0){ uint32_t pc=(uint64_t)total*100/expected; if(pc>=last_pc+progress_step_){ last_pc=pc-(pc%progress_step_); ESP_LOGI(TAG,"Progress: %u%% (%u/%u)",(unsigned)pc,(unsigned)total,(unsigned)expected);} } else { if(total/65536>last_pc){ last_pc=total/65536; ESP_LOGI(TAG,"Progress: %u bytes",(unsigned)total);} } }
+  void update_progress_(uint32_t total, uint32_t expected, uint32_t &last_pc){
+    if (!show_progress_) return;
+    if (expected > 0) {
+      uint32_t pc = (uint64_t)total * 100 / expected;
+      if (pc >= last_pc + progress_step_) {
+        last_pc = pc - (pc % progress_step_);
+        ESP_LOGI(TAG, "Progress: %u%% (%u/%u)", (unsigned)pc, (unsigned)total, (unsigned)expected);
+      }
+    } else {
+      if (total / 65536 > last_pc) {
+        last_pc = total / 65536;
+        ESP_LOGI(TAG, "Progress: %u bytes", (unsigned)total);
+      }
+    }
+  }
 
   // Probe only the ZNP product field (from SYS_VERSION) and publish variant text if configured
   void probe_znp_product_(){
@@ -1022,7 +1037,7 @@ class CC2652Flasher : public Component {
     return true;
   }
   void leave_bootloader_(){ rst_sw_->turn_on(); delay_(20); rst_sw_->turn_off(); delay_(20); }
-  void restore_baud_(){ if (restore_baud_rate_>0){ ESP_LOGD(TAG,"Restoring UART baud: %u", restore_baud_rate_); uart_->set_baud_rate(restore_baud_rate_);} }
+  void restore_baud_(){ if (restore_baud_rate_>0){ ESP_LOGD(TAG,"Restoring UART baud: %" PRIu32, restore_baud_rate_); uart_->set_baud_rate(restore_baud_rate_);} }
 
   bool bsl_autobaud_(uint32_t timeout_ms=800){
     for (int attempt=0; attempt<3; ++attempt){
@@ -1086,7 +1101,7 @@ class CC2652Flasher : public Component {
     ESP_LOGI(TAG,"Starting erase-only flow (mode=%u)…", (unsigned)mode);
     if (!uart_ || !bsl_sw_ || !rst_sw_){ ESP_LOGE(TAG,"Not configured (uart/switches)."); return; }
 
-    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %u", boot_baud_); uart_->set_baud_rate(boot_baud_); }
+    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %" PRIu32, boot_baud_); uart_->set_baud_rate(boot_baud_); }
     if(!enter_bootloader_()){ ESP_LOGE(TAG,"Failed to enter bootloader."); restore_baud_(); return; }
     if(!bsl_autobaud_(1200)){ ESP_LOGE(TAG,"Auto-baud failed."); leave_bootloader_(); restore_baud_(); return; }
     delay_(20); flush_uart_();
@@ -1143,7 +1158,7 @@ class CC2652Flasher : public Component {
     erased_pages_.clear();
     bank_erased_all_ = false;
 
-    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %u", boot_baud_); uart_->set_baud_rate(boot_baud_); }
+    if (boot_baud_ > 0) { ESP_LOGD(TAG,"Setting UART boot baud: %" PRIu32, boot_baud_); uart_->set_baud_rate(boot_baud_); }
 
     if(!enter_bootloader_()){ ESP_LOGE(TAG,"Failed to enter bootloader."); restore_baud_(); return; }
     if(!bsl_autobaud_()){   ESP_LOGE(TAG,"Auto-baud failed.");   leave_bootloader_(); restore_baud_(); return; }
